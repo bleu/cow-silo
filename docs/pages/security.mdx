@@ -1,0 +1,33 @@
+# Security model
+
+## Enforced onchain
+
+The Silo enforces these rules:
+
+- The sell token is not the resource token.
+- The buy token is the resource token.
+- The receiver is the fixed resource recipient.
+- The sell amount equals the complete current balance.
+- The buy amount is greater than zero.
+- The order expires in five minutes or less.
+- The app data matches the fixed app data.
+- The fee is zero.
+- The order is a fill-or-kill sell order.
+- Both balance types are ERC-20.
+- The Settlement contract committed the exact order hash in the same transaction.
+
+## Required external controls
+
+CoW Protocol authorizes solvers. CoW Protocol also controls the surplus-capturing JIT owner set. This set must include the production Silo deployment model.
+
+The Silo has no price oracle. Solver competition supplies price discovery. If competition fails, an order can use a poor limit price. Protocols must treat CoW configuration and solver diversity as security dependencies.
+
+## Token behavior
+
+The first settlement for a token gives the Vault Relayer an unlimited allowance. The configured CoW Settlement contract is the only caller of the Vault Relayer.
+
+Rebasing tokens, fee-on-transfer tokens, callback tokens, and tokens with unusual approval rules need separate tests. The current version targets standard ERC-20 tokens.
+
+## Status
+
+The code is unaudited. Use testnet funds only.

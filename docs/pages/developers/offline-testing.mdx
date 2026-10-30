@@ -1,0 +1,15 @@
+# Offline testing
+
+The fast test loop uses Foundry mocks. It tests the order hash, transient commitment, approval, and permanent invariants.
+
+The optional offline profile uses the CoW Protocol Offline Playground. It starts Anvil, Settlement, Vault Relayer, orderbook, autopilot, driver, baseline solver, tokens, and test liquidity.
+
+```sh
+./integration/offline/manage.sh bootstrap
+./integration/offline/manage.sh up
+./integration/offline/manage.sh status
+```
+
+The profile pins an upstream commit. It stores the checkout in `.cache/`. The profile is not part of the default CI job because it builds the complete CoW service stack.
+
+Use this profile to validate settlement calldata and solver adapter changes. Use the official `cowprotocol/services` playground for changes that need the current production service code.

@@ -1,0 +1,43 @@
+# Solvers
+
+## Why use Silo liquidity
+
+A Silo offers protocol-owned inventory. A solver can use this inventory to satisfy user demand in the same batch. The solver can also route the inventory through external liquidity.
+
+Silo inventory has no onchain oracle price. Your solver must price the token and account for gas, transfer behavior, and execution risk.
+
+## Discovery
+
+Index `SiloCreated` events. Store the immutable resource token, recipient, app data, Settlement address, and Vault Relayer. Read ERC-20 balances for tokens that your solver supports.
+
+## Build a solution
+
+1. Read the current Silo balance.
+2. Select the resource output and the order limit.
+3. Build a fill-or-kill sell order with the SDK.
+4. Encode the ERC-1271 signature. The solver API signature starts with the 20-byte Silo address.
+5. Add `Silo.commit` as a pre-interaction.
+6. Submit the JIT trade with `executedAmount` equal to the full sell amount.
+
+```ts
+import {
+  buildCommitInteraction,
+  buildOrder,
+  toSolverJitOrder,
+} from "@cow-silo/sdk";
+
+const order = buildOrder({
+  sellToken,
+  resourceToken,
+  resourceRecipient,
+  sellAmount: balance,
+  buyAmount: limitAmount,
+  validTo: now + 300,
+  appData,
+});
+
+const jitOrder = toSolverJitOrder(silo, order);
+const preInteraction = buildCommitInteraction(silo, order, domainSeparator);
+```
+
+The SDK emits the current CoW solver JIT wire format. Your solver still controls the solution graph and interaction placement.

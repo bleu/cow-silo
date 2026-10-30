@@ -1,0 +1,19 @@
+# TJAR comparison
+
+Silo and TJAR keep price discovery offchain. Their execution models differ.
+
+| Area | Uniswap TJAR | CoW Silo |
+| --- | --- | --- |
+| Asset holder | `TokenJar` | `Silo` |
+| Conversion actor | Searcher | CoW solver |
+| Selection | First valid release transaction | CoW solver competition |
+| Price rule | Fixed resource payment for a release | Solver-selected JIT limit and batch clearing price |
+| Withdrawal | Releaser transfers selected full balances | Vault Relayer sells one full balance |
+| Burn sink | `Firepit` | `Burner` |
+| Discovery | Factory events and offchain search | Factory events and solver indexing |
+| Oracle | None | None |
+| Routing | Searcher | Solver |
+
+TJAR creates a speed race around a fixed onchain payment. Silo puts candidate conversions into a CoW auction. The auction can reduce MEV and value leakage when several solvers compete.
+
+Silo needs CoW infrastructure support. TJAR does not need a batch-auction allowlist.

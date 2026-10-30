@@ -1,0 +1,22 @@
+# Solver SDK
+
+The TypeScript package is `@cow-silo/sdk`.
+
+It provides these functions:
+
+| Function | Result |
+| --- | --- |
+| `buildOrder` | Canonical Silo order data. |
+| `encodeOrderPayload` | Raw ERC-1271 payload for `Silo.isValidSignature`. |
+| `encodeSolverSignature` | CoW solver API signature with the Silo owner prefix. |
+| `hashOrder` | CoW EIP-712 order digest from a Settlement domain separator. |
+| `buildCommitInteraction` | Pre-interaction for `Silo.commit`. |
+| `toSolverJitOrder` | Current CoW solver API JIT order object. |
+
+The package uses `bigint` for token amounts. It does not fetch balances or prices. The solver controls those data sources.
+
+Run the SDK tests:
+
+```sh
+pnpm --filter @cow-silo/sdk test
+```

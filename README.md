@@ -1,0 +1,99 @@
+<p align="center">
+  <img src="./docs/public/silo-hero.png" alt="Fee tokens enter a silo. Competing solvers convert them to one resource token for a treasury or burner." width="100%" />
+</p>
+
+# CoW Silo
+
+CoW Silo converts protocol fee tokens through CoW Protocol solver competition.
+
+The contracts are small. They do not contain a token registry, an oracle, a router, or a keeper. Solvers find Silo balances. Solvers set candidate prices. CoW Protocol selects the winning settlement.
+
+> [!WARNING]
+> This repository is an early implementation. The contracts have not completed an audit. CoW Protocol must recognize deployed Silo addresses as surplus-capturing JIT-order owners before production use.
+
+## Components
+
+| Component | Purpose |
+| --- | --- |
+| `Silo` | Holds arbitrary fee tokens. It validates full-balance JIT sell orders for one resource token. |
+| `SiloFactory` | Deploys Silo instances with CREATE2. It emits discovery events. It has no control over a Silo. |
+| `Burner` | Receives one resource token. Any account can move its full balance to `0x…dEaD`. |
+| Solver SDK | Builds canonical orders, ERC-1271 payloads, order hashes, and commit interactions. |
+
+The bridged burner is roadmap work. It is not part of this version.
+
+```mermaid
+flowchart LR
+  P[Protocol fee sources] -->|arbitrary ERC-20 tokens| S[Silo]
+  F[SiloFactory events] --> D[Solver discovery]
+  D --> A[CoW auction]
+  S -->|full-balance JIT orders| A
+  A -->|winning settlement| T[Resource token]
+  T --> R[Treasury]
+  T --> B[Burner]
+```
+
+## How the order works
+
+1. A protocol sends fee tokens to a Silo.
+2. Solvers read the Silo balance.
+3. Each solver builds a JIT order and selects a buy amount.
+4. The solver adds `Silo.commit` as a settlement pre-interaction.
+5. CoW Protocol scores the solutions.
+6. The winning settlement sells the full token balance.
+7. The settlement sends the resource token to the fixed recipient.
+
+The Silo checks the token pair, recipient, full balance, expiry, app data, fee, order kind, and balance type. The Silo does not check a market price. The CoW competition is the price-discovery mechanism.
+
+## Development
+
+Requirements:
+
+- Foundry with Cancun EVM support.
+- Node.js 24 or later.
+- pnpm 10.
+
+```sh
+git submodule update --init --recursive
+pnpm install --frozen-lockfile
+forge test
+pnpm test
+pnpm build
+```
+
+Run the documentation site:
+
+```sh
+pnpm docs:dev
+```
+
+## Testnet deployment
+
+Copy `.env.example`. Set the CoW Settlement address for the target chain. Then deploy the factory and one Silo.
+
+```sh
+source .env
+forge script script/DeployFactory.s.sol:DeployFactory \
+  --rpc-url "$RPC_URL" --broadcast --verify
+
+forge script script/DeploySilo.s.sol:DeploySilo \
+  --rpc-url "$RPC_URL" --broadcast --verify
+```
+
+Use the Burner address as `RESOURCE_RECIPIENT` when the resource token must leave circulation. Deploy the Burner first.
+
+No official Silo deployment exists. See [the deployment registry](./deployments/addresses.json).
+
+## CoW integration status
+
+The onchain and SDK paths are implemented and tested. The next integration step is an upstream CoW configuration change. It must add approved Silo owners, or an approved Silo factory, to the surplus-capturing JIT owner set. Without that change, Silo surplus does not count in solution scoring as intended.
+
+The optional [offline integration profile](./integration/offline/README.md) starts a complete local CoW stack. It is separate from the fast unit-test loop.
+
+## Documentation
+
+The Vocs source is in [`docs`](./docs). It contains the protocol, solver, deployer, security, and deployment guides.
+
+## License
+
+GPL-3.0-or-later. See [LICENSE](./LICENSE).

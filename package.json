@@ -1,0 +1,14 @@
+{
+  "name": "cow-silo",
+  "private": true,
+  "packageManager": "pnpm@10.21.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "pnpm --filter @cow-silo/sdk build && pnpm --filter @cow-silo/docs build",
+    "docs:dev": "pnpm --filter @cow-silo/docs dev",
+    "format:check": "forge fmt --check && pnpm --filter @cow-silo/sdk typecheck",
+    "test": "forge test && pnpm --filter @cow-silo/sdk test"
+  }
+}

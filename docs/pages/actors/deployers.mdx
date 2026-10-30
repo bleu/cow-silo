@@ -1,0 +1,22 @@
+# Deployers
+
+## Before deployment
+
+- Confirm the canonical CoW Settlement address.
+- Confirm that the Settlement returns the expected Vault Relayer.
+- Confirm Cancun EVM support on the target chain.
+- Select the resource token and recipient.
+- Register the app data document and store its hash.
+- Obtain the required CoW JIT owner configuration.
+
+## Deploy
+
+Use the Foundry scripts in `script/`. The scripts read `.env` values. They support simulation, broadcast, and verification.
+
+Deploy the Burner before the Silo when the output must leave circulation. Set the Burner address as `RESOURCE_RECIPIENT`.
+
+## Record
+
+Add verified addresses to `deployments/addresses.json`. Add the chain, factory, Silo, Burner, Settlement, resource token, recipient, app data, transaction hash, and source commit.
+
+Do not label a deployment as official before an audit and the CoW integration review.

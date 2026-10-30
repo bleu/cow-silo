@@ -1,0 +1,20 @@
+# Compiler files
+cache/
+out/
+
+# Ignores development broadcast logs
+!/broadcast
+/broadcast/*/31337/
+/broadcast/**/dry-run/
+
+# JavaScript
+node_modules/
+dist/
+docs/dist/
+
+# Optional local integration stack
+.cache/
+
+# Dotenv file
+.env
+.DS_Store
