@@ -8,15 +8,15 @@ Silo inventory has no onchain oracle price. Your solver must price the token and
 
 ## Discovery
 
-Index `SiloCreated` events. Store the immutable resource token, recipient, app data, Settlement address, and Vault Relayer. Read ERC-20 balances for tokens that your solver supports.
+Index `SiloCreated` and `MinimumBuyAmountSet` events. Store the immutable resource token, recipient, app data, Settlement address, and Vault Relayer. Read the current `minimumBuyAmount` before building an order. Read ERC-20 balances for tokens that your solver supports.
 
 ## Build a solution
 
 1. Read the current Silo balance.
-2. Select the resource output and the order limit.
+2. Read the current minimum buy amount and select an order limit at or above it.
 3. Build a fill-or-kill sell order with the SDK.
 4. Encode the ERC-1271 signature. The solver API signature starts with the 20-byte Silo address.
-5. Add `Silo.commit` as a pre-interaction.
+5. Add one `Silo.commit` pre-interaction for each Silo order.
 6. Submit the JIT trade with `executedAmount` equal to the full sell amount.
 
 ```ts
@@ -32,6 +32,7 @@ const order = buildOrder({
   resourceRecipient,
   sellAmount: balance,
   buyAmount: limitAmount,
+  minimumBuyAmount,
   validTo: now + 300,
   appData,
 });
@@ -40,4 +41,6 @@ const jitOrder = toSolverJitOrder(silo, order);
 const preInteraction = buildCommitInteraction(silo, order, domainSeparator);
 ```
 
-The SDK emits the current CoW solver JIT wire format. Your solver still controls the solution graph and interaction placement.
+Use `buildCommitInteractions` when a settlement contains several Silo orders. Each order has an independent transient commitment.
+
+The SDK emits the current CoW solver JIT wire format. Your solver still controls the solution graph and interaction placement. An order can execute above its limit; all executed resource-token output goes to the configured recipient.

@@ -6,6 +6,8 @@
 - Confirm that the Settlement returns the expected Vault Relayer.
 - Confirm Cancun EVM support on the target chain.
 - Select the resource token and recipient.
+- Select the initial minimum buy amount in the resource token's smallest unit.
+- Select the initial owner. The factory caller becomes the owner.
 - Register the app data document and store its hash.
 - Obtain the required CoW JIT owner configuration.
 
@@ -15,8 +17,10 @@ Use the Foundry scripts in `script/`. The scripts read `.env` values. They suppo
 
 Deploy the Burner before the Silo when the output must leave circulation. Set the Burner address as `RESOURCE_RECIPIENT`.
 
+Set `MINIMUM_BUY_AMOUNT` to a non-zero value. Transfer ownership to the protocol through `transferOwnership`; the protocol must call `acceptOwnership`. Ownership controls only the minimum buy amount.
+
 ## Record
 
-Add verified addresses to `deployments/addresses.json`. Add the chain, factory, Silo, Burner, Settlement, resource token, recipient, app data, transaction hash, and source commit.
+Add verified addresses to `deployments/addresses.json`. Add the chain, factory, Silo, owner, Burner, Settlement, resource token, recipient, minimum buy amount, app data, transaction hash, and source commit.
 
 Do not label a deployment as official before an audit and the CoW integration review.

@@ -66,7 +66,9 @@ export const siloAbi = parseAbi([
   "function domainSeparator() view returns (bytes32)",
   "function resourceToken() view returns (address)",
   "function resourceRecipient() view returns (address)",
+  "function minimumBuyAmount() view returns (uint256)",
   "function appData() view returns (bytes32)",
+  "function isCommitted(bytes32 orderHash) view returns (bool)",
 ]);
 
 export function buildOrder(input: {
@@ -75,11 +77,15 @@ export function buildOrder(input: {
   resourceRecipient: Address;
   sellAmount: bigint;
   buyAmount: bigint;
+  minimumBuyAmount: bigint;
   validTo: number;
   appData: Hex;
 }): SiloOrder {
   if (input.sellAmount <= 0n) throw new Error("sellAmount must be positive");
-  if (input.buyAmount <= 0n) throw new Error("buyAmount must be positive");
+  if (input.minimumBuyAmount <= 0n) throw new Error("minimumBuyAmount must be positive");
+  if (input.buyAmount < input.minimumBuyAmount) {
+    throw new Error("buyAmount must be at least minimumBuyAmount");
+  }
   if (input.sellToken.toLowerCase() === input.resourceToken.toLowerCase()) {
     throw new Error("sellToken must differ from resourceToken");
   }
@@ -143,6 +149,15 @@ export function buildCommitInteraction(silo: Address, order: SiloOrder, domainSe
       args: [orderHash, order.sellToken, order.sellAmount],
     }),
   };
+}
+
+/** Builds one pre-interaction for each independent Silo order in a settlement. */
+export function buildCommitInteractions(
+  silo: Address,
+  orders: readonly SiloOrder[],
+  domainSeparator: Hex,
+): Interaction[] {
+  return orders.map((order) => buildCommitInteraction(silo, order, domainSeparator));
 }
 
 export function toSolverJitOrder(silo: Address, order: SiloOrder): SolverJitOrder {

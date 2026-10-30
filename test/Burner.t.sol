@@ -5,6 +5,7 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { Test } from "forge-std/Test.sol";
 
 import { Burner } from "../src/Burner.sol";
+import { IBurner } from "../src/interfaces/IBurner.sol";
 import { MockERC20 } from "./mocks/MockERC20.sol";
 
 contract BurnerTest is Test {
@@ -24,7 +25,12 @@ contract BurnerTest is Test {
     }
 
     function testBurnRevertsOnEmptyBalance() public {
-        vm.expectRevert(Burner.EmptyBalance.selector);
+        vm.expectRevert(IBurner.EmptyBalance.selector);
         burner.burn();
+    }
+
+    function testConstructorRejectsZeroToken() public {
+        vm.expectRevert(IBurner.ZeroAddress.selector);
+        new Burner(IERC20(address(0)));
     }
 }

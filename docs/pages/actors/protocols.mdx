@@ -8,14 +8,19 @@ Silo can convert many fee tokens into one treasury token. The protocol does not 
 
 1. Select the resource token.
 2. Select a treasury or deploy a Burner.
-3. Select an app data hash.
-4. Deploy a Silo through `SiloFactory`.
-5. Send fee tokens to the Silo.
-6. Confirm that CoW Protocol recognizes the Silo deployment model.
-7. Monitor settlements and received resource tokens.
+3. Select a non-zero minimum buy amount in the resource token.
+4. Select an app data hash.
+5. Deploy a Silo through `SiloFactory`.
+6. Send fee tokens to the Silo.
+7. Confirm that CoW Protocol recognizes the Silo deployment model.
+8. Monitor settlements and received resource tokens.
 
 Do not send the resource token to the Silo. The Silo cannot sell its resource token.
 
-## Minimum balance policy
+## Minimum buy amount
 
-The contract does not store a minimum balance. Solvers choose when a balance is economical to settle. A protocol can publish a recommended threshold offchain. This policy does not change the Silo contract.
+The Silo rejects orders whose `buyAmount` is below `minimumBuyAmount`. The value uses the resource token's smallest unit. For example, a USDC Silo can require a minimum USDC output, and a COW Silo can require a minimum COW output.
+
+The minimum applies to each full-balance order. It is not a USD value unless the resource token is a USD-denominated token. It is also not a fair-price oracle. CoW solver competition determines execution value above the minimum.
+
+The two-step owner can update the minimum. An update does not change the Silo address or its other order rules. Small balances remain in the Silo until a solver can meet the current minimum.

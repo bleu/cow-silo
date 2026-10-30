@@ -11,9 +11,10 @@ It provides these functions:
 | `encodeSolverSignature` | CoW solver API signature with the Silo owner prefix. |
 | `hashOrder` | CoW EIP-712 order digest from a Settlement domain separator. |
 | `buildCommitInteraction` | Pre-interaction for `Silo.commit`. |
+| `buildCommitInteractions` | Pre-interactions for several independent Silo orders. |
 | `toSolverJitOrder` | Current CoW solver API JIT order object. |
 
-The package uses `bigint` for token amounts. It does not fetch balances or prices. The solver controls those data sources.
+The package uses `bigint` for token amounts. `buildOrder` requires the current `minimumBuyAmount` and rejects a lower limit. The package does not fetch balances, configuration, or prices. The solver controls those data sources.
 
 Run the SDK tests:
 
