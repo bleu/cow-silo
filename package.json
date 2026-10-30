@@ -10,5 +10,11 @@
     "docs:dev": "pnpm --filter @cow-silo/docs dev",
     "format:check": "forge fmt --check && pnpm --filter @cow-silo/sdk typecheck",
     "test": "forge test && pnpm --filter @cow-silo/sdk test"
+  },
+  "pnpm": {
+    "overrides": {
+      "@hono/node-server": "^2.1.3",
+      "toml": "^5.0.1"
+    }
   }
 }
