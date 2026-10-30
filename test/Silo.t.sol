@@ -48,12 +48,12 @@ contract SiloTest is Test {
         GPv2Order.Data memory order = validOrder(amount, 9 ether);
         bytes32 digest = order.hash(DOMAIN_SEPARATOR);
 
-        vm.prank(address(settlement));
-        silo.commit(digest, OZIERC20(address(collected)), amount);
+        (bytes32 observedCommitment, bytes4 result) =
+            settlement.commitAndValidate(silo, digest, OZIERC20(address(collected)), amount, abi.encode(order));
 
-        assertEq(silo.commitment(), digest);
+        assertEq(observedCommitment, digest);
         assertEq(collected.allowance(address(silo), vaultRelayer), type(uint256).max);
-        assertEq(silo.isValidSignature(digest, abi.encode(order)), IERC1271.isValidSignature.selector);
+        assertEq(result, IERC1271.isValidSignature.selector);
     }
 
     function testCommitRevertsOutsideSettlement() public {
