@@ -9,6 +9,7 @@
     "build": "pnpm --filter @cow-silo/sdk build && pnpm --filter @cow-silo/docs build",
     "docs:dev": "pnpm --filter @cow-silo/docs dev",
     "format:check": "forge fmt --check && pnpm --filter @cow-silo/sdk typecheck",
+    "test:mainnet": "FOUNDRY_PROFILE=mainnet forge test --threads 1",
     "test": "forge test && pnpm --filter @cow-silo/sdk test"
   },
   "pnpm": {

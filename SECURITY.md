@@ -6,7 +6,7 @@ Send a private report to `security@bleu.fi`. Include the affected commit, the im
 
 ## Trust model
 
-- A Silo has no administrator.
+- The two-step Silo owner can change the minimum buy amount and replace or disable the funding adapter. The owner cannot withdraw Silo tokens.
 - The resource token, recipient, app data, Settlement contract, and Vault Relayer are immutable.
 - Only the configured Settlement contract can create a transient order commitment.
 - The Vault Relayer receives an unlimited token allowance after the first settlement for that token.

@@ -20,9 +20,21 @@ Each order uses a separate transient-storage commitment. Committing a second ord
 
 ## Administrative control
 
-The Silo uses two-step ownership. The owner can change only `minimumBuyAmount`. A zero minimum is not valid. The owner cannot change the resource token, recipient, Settlement contract, Vault Relayer, or app data. The owner cannot withdraw fee tokens.
+The Silo uses two-step ownership. The owner can change `minimumBuyAmount` and replace or disable `fundingAdapter`. A zero minimum is not valid. The owner cannot change the resource token, recipient, Settlement contract, Vault Relayer, or app data. The owner cannot withdraw fee tokens.
 
-Renouncing ownership permanently freezes the current minimum. A production protocol should use its standard governance controls as the owner.
+Renouncing ownership permanently freezes the current minimum and adapter configuration. A production protocol should use its standard governance controls as the owner.
+
+## Optional funding
+
+Funding starts disabled. After caller, token, and positive-amount checks, `commit` attempts `fund(sellToken)` on a non-zero adapter with a fixed 200,000 gas cap. It ignores failure and return data. An expensive adapter can fail within this cap. The cap does not guarantee success when the outer transaction has too little gas. If funding fails, the current Silo balance must still exactly match `sellAmount`; prefunding alone does not make an order for a larger amount valid.
+
+`ApprovalFundingAdapter` fixes a non-zero source and Silo recipient. Only the Silo can call `fund`. The source approves the adapter as the actual spender, not the Silo or Vault Relayer. The adapter can transfer only the smaller of the source balance and its allowance. Replacing or disabling the adapter does not revoke the source's token allowances. Revoke old adapter allowances separately.
+
+Source approval permits inventory to move into the Silo on a valid `commit`. A commitment does not require a later trade or signature validation. An authorized Settlement interaction can commit a matching funded balance without selling it, leaving source tokens in the Silo. The fixed recipient prevents diversion to another address; it does not guarantee that source inventory stays at the source until a completed conversion.
+
+Changes to source inventory, allowances, or adapter configuration can make the exact-balance check revert. If the outer transaction reverts, the source transfer also rolls back. A successful commit without a trade does not roll back funding.
+
+Adapters have no privileged withdrawal bypass. A protocol-specific adapter must use the source protocol's existing permissions. Review those permissions and adapter behavior before granting access.
 
 ## Required external controls
 

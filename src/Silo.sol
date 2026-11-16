@@ -11,6 +11,7 @@ import { GPv2Order } from "cowprotocol/contracts/libraries/GPv2Order.sol";
 
 import { ISettlement } from "./interfaces/ISettlement.sol";
 import { ISilo } from "./interfaces/ISilo.sol";
+import { IFundingAdapter } from "./interfaces/IFundingAdapter.sol";
 
 /// @title Silo
 /// @notice Holds fee tokens and exposes them as surplus-capturing CoW JIT liquidity.
@@ -20,6 +21,7 @@ contract Silo is ISilo, Ownable2Step {
     using SafeERC20 for OZIERC20;
 
     uint32 public constant MAX_ORDER_DURATION = 5 minutes;
+    uint256 public constant FUNDING_GAS_LIMIT = 200_000;
 
     bytes32 private constant COMMITMENT_NAMESPACE = keccak256("cow-silo.Silo.commitment");
 
@@ -30,6 +32,7 @@ contract Silo is ISilo, Ownable2Step {
     bytes32 public immutable override appData;
     bytes32 public immutable override domainSeparator;
     uint256 public override minimumBuyAmount;
+    IFundingAdapter public override fundingAdapter;
 
     constructor(
         ISettlement settlement_,
@@ -60,6 +63,13 @@ contract Silo is ISilo, Ownable2Step {
     }
 
     /// @inheritdoc ISilo
+    function setFundingAdapter(IFundingAdapter newAdapter) external override onlyOwner {
+        address previousAdapter = address(fundingAdapter);
+        fundingAdapter = newAdapter;
+        emit FundingAdapterSet(previousAdapter, address(newAdapter));
+    }
+
+    /// @inheritdoc ISilo
     function setMinimumBuyAmount(uint256 newMinimumBuyAmount) external override onlyOwner {
         if (newMinimumBuyAmount == 0) revert InvalidMinimumBuyAmount();
 
@@ -77,6 +87,16 @@ contract Silo is ISilo, Ownable2Step {
             revert InvalidSellToken();
         }
         if (sellAmount == 0) revert EmptyBalance();
+
+        IFundingAdapter adapter = fundingAdapter;
+        if (address(adapter) != address(0)) {
+            bytes memory callData = abi.encodeCall(IFundingAdapter.fund, (sellToken));
+            uint256 gasLimit = FUNDING_GAS_LIMIT;
+            // Ignore failure and do not copy untrusted return data.
+            assembly ("memory-safe") {
+                pop(call(gasLimit, adapter, 0, add(callData, 0x20), mload(callData), 0, 0))
+            }
+        }
 
         uint256 actualBalance = sellToken.balanceOf(address(this));
         if (actualBalance != sellAmount) revert BalanceChanged(sellAmount, actualBalance);

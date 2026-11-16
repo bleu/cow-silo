@@ -11,11 +11,21 @@ Silo can convert many fee tokens into one treasury token. The protocol does not 
 3. Select a non-zero minimum buy amount in the resource token.
 4. Select an app data hash.
 5. Deploy a Silo through `SiloFactory`.
-6. Send fee tokens to the Silo.
+6. Send fee tokens to the Silo or configure optional adapter funding.
 7. Confirm that CoW Protocol recognizes the Silo deployment model.
 8. Monitor settlements and received resource tokens.
 
 Do not send the resource token to the Silo. The Silo cannot sell its resource token.
+
+## Optional source funding
+
+A new Silo has no funding adapter. Direct transfers remain supported. To use approved source inventory, deploy `ApprovalFundingAdapter(source, silo)` with non-zero source and Silo addresses. Both addresses are immutable. The Silo owner then calls `setFundingAdapter(adapter)`. The source grants each sell-token allowance to the adapter, not to the Silo or Vault Relayer.
+
+Only the fixed Silo can call the adapter's `fund(token)`. It transfers `min(source balance, source allowance to adapter)` into that Silo. Zero available inventory is a no-op. Source approval permits that inventory to move on a valid commit even if no trade follows. Do not use this approval when the source must retain the inventory until a completed sale.
+
+The owner can replace the adapter or disable it with `setFundingAdapter(address(0))`. This does not revoke source allowances. Revoke the old adapter's allowances separately. A protocol-specific adapter must use the protocol's existing permissions; configuring an adapter does not grant a privileged withdrawal bypass.
+
+Solvers must use the current Silo balance plus expected adapter funding as the sell amount. Changes to inventory, allowances, or adapter configuration can invalidate that amount. The Silo attempts funding with a fixed 200,000 gas cap and ignores failure. An adapter that needs more gas can fail; any fallback prefunded balance must still match the order amount exactly. An outer transaction revert also rolls back the source transfer.
 
 ## Minimum buy amount
 

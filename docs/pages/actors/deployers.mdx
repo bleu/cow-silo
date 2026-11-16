@@ -17,7 +17,11 @@ Use the Foundry scripts in `script/`. The scripts read `.env` values. They suppo
 
 Deploy the Burner before the Silo when the output must leave circulation. Set the Burner address as `RESOURCE_RECIPIENT`.
 
-Set `MINIMUM_BUY_AMOUNT` to a non-zero value. Transfer ownership to the protocol through `transferOwnership`; the protocol must call `acceptOwnership`. Ownership controls only the minimum buy amount.
+Set `MINIMUM_BUY_AMOUNT` to a non-zero value. Transfer ownership to the protocol through `transferOwnership`; the protocol must call `acceptOwnership`. Ownership controls the minimum buy amount and funding adapter.
+
+The six-argument Silo constructor and factory deployment API are unchanged. Funding starts disabled. For optional source funding, deploy `ApprovalFundingAdapter(source, silo)` after the Silo, then have the Silo owner call `setFundingAdapter(adapter)`. The source must approve the adapter as the sell-token spender. Neither the Silo nor the Vault Relayer spends directly from the source. Record the adapter and source addresses with the deployment configuration.
+
+Recompute CREATE2 predictions with the new Silo creation code. The same inputs and salt produce different addresses when the creation code changes. Existing deployed Silo instances remain unchanged; this feature does not upgrade them. Disabling or replacing an adapter does not revoke source allowances. Revoke old allowances separately.
 
 ## Record
 
