@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   BALANCE_ERC20,
   buildCommitInteraction,
+  buildCommitInteractions,
   buildOrder,
   encodeOrderPayload,
   encodeSolverSignature,
@@ -26,6 +27,7 @@ function order() {
     resourceRecipient: receiver,
     sellAmount: 100n,
     buyAmount: 25n,
+    minimumBuyAmount: 10n,
     validTo: 1_900_000_000,
     appData,
   });
@@ -68,6 +70,12 @@ describe("Silo SDK", () => {
     expect(interaction.callData).toContain(digest.slice(2));
   });
 
+  it("builds independent commit interactions for multiple orders", () => {
+    const interactions = buildCommitInteractions(silo, [order(), order()], domainSeparator);
+    expect(interactions).toHaveLength(2);
+    expect(interactions[0]).toEqual(interactions[1]);
+  });
+
   it("creates the CoW solver wire format", () => {
     expect(toSolverJitOrder(silo, order())).toMatchObject({
       sellAmount: "100",
@@ -85,9 +93,25 @@ describe("Silo SDK", () => {
         resourceRecipient: receiver,
         sellAmount: 1n,
         buyAmount: 1n,
+        minimumBuyAmount: 1n,
         validTo: 1,
         appData,
       }),
     ).toThrow("sellToken must differ");
+  });
+
+  it("rejects a buy amount below the configured minimum", () => {
+    expect(() =>
+      buildOrder({
+        sellToken,
+        resourceToken,
+        resourceRecipient: receiver,
+        sellAmount: 100n,
+        buyAmount: 9n,
+        minimumBuyAmount: 10n,
+        validTo: 1,
+        appData,
+      }),
+    ).toThrow("buyAmount must be at least minimumBuyAmount");
   });
 });

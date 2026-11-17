@@ -2,7 +2,7 @@
 
 ## Silo
 
-`Silo` is an immutable ERC-1271 order owner.
+`Silo` is an ERC-1271 order owner. Most order rules are immutable. A two-step owner can change the minimum buy amount.
 
 Permanent values:
 
@@ -13,18 +13,25 @@ Permanent values:
 - CoW app data hash.
 - Settlement EIP-712 domain separator.
 
+Managed value:
+
+- Minimum buy amount, denominated in the resource token's smallest unit.
+
+The owner cannot change the resource token, recipient, Settlement contract, Vault Relayer, or app data. The owner cannot transfer tokens from the Silo.
+
 Main functions:
 
 | Function | Caller | Result |
 | --- | --- | --- |
-| `commit(orderHash, sellToken, sellAmount)` | Settlement only | Records one transient order hash. Approves the Vault Relayer when required. |
+| `setMinimumBuyAmount(amount)` | Owner only | Changes the resource-denominated execution floor. Zero is not valid. |
+| `commit(orderHash, sellToken, sellAmount)` | Settlement only | Records an independent transient order commitment. Approves the Vault Relayer when required. |
 | `isValidSignature(hash, signature)` | Settlement | Validates the committed order through ERC-1271. |
-| `verify(order)` | Any account | Checks the permanent Silo order rules. |
-| `commitment()` | Any account | Returns the transient commitment for the current transaction. |
+| `verify(order)` | Any account | Checks the Silo order rules and current minimum. |
+| `isCommitted(orderHash)` | Any account | Reports whether an order is committed in the current transaction. |
 
 ## SiloFactory
 
-`SiloFactory` uses CREATE2. The creator address and the user salt define the deployment salt. The factory emits a `SiloCreated` event for discovery.
+`SiloFactory` uses CREATE2. The owner address and user salt define the deployment salt. The caller becomes the initial Silo owner. The factory emits a `SiloCreated` event for discovery.
 
 The factory cannot change a Silo. It cannot move Silo funds.
 

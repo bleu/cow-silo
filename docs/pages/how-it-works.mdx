@@ -6,24 +6,24 @@ A protocol transfers any ERC-20 fee token to its Silo address. The Silo does not
 
 ## Discovery
 
-Solvers index `SiloCreated` events from `SiloFactory`. They read token balances from each Silo. A solver can use any data source to select a minimum useful balance.
+Solvers index `SiloCreated` events from `SiloFactory`. They read token balances and the current minimum buy amount from each Silo.
 
 ## Competition
 
 Each solver creates a candidate JIT order. The order sells the complete token balance. It buys the fixed resource token. It pays the fixed resource recipient.
 
-The solver sets `buyAmount`. This value is the order limit. The Silo has no price oracle.
+The solver sets `buyAmount`. This value is the order limit and must be at least `minimumBuyAmount`. The minimum is denominated in the resource token. It defines the least acceptable output for one full-balance order; it does not assert fair market value. The Silo has no price oracle.
 
 CoW Protocol scores competing settlements. A higher execution value improves the score when CoW recognizes the Silo as a surplus-capturing JIT owner.
 
 ## Settlement
 
-The solution contains a pre-interaction. The pre-interaction calls `Silo.commit` through the CoW Settlement contract. The call records one order hash in transient storage. It also approves the Vault Relayer when required.
+The solution contains one pre-interaction for each Silo order. Each pre-interaction calls `Silo.commit` through the CoW Settlement contract. The call records the order hash in a dedicated transient-storage slot. It also approves the Vault Relayer when required.
 
-The Settlement contract then verifies the ERC-1271 signature. The Silo accepts only the committed order. Transient storage clears at the end of the transaction.
+The Settlement contract then verifies each ERC-1271 signature. The Silo accepts only committed orders. Several independent Silo orders can execute in one settlement. Transient storage clears at the end of the transaction.
 
 ## Output
 
-The Settlement contract sends the resource token to the immutable recipient. The recipient can be a treasury or a Burner.
+The Settlement contract sends the complete executed resource-token output to the immutable recipient. The recipient can be a treasury or a Burner. Output above the minimum remains with the recipient.
 
 The Burner sends its full balance to `0x000000000000000000000000000000000000dEaD`. This action removes standard ERC-20 tokens from circulation. It does not reduce `totalSupply` unless the token implements that behavior.

@@ -15,7 +15,7 @@ The contracts are small. They do not contain a token registry, an oracle, a rout
 
 | Component | Purpose |
 | --- | --- |
-| `Silo` | Holds arbitrary fee tokens. It validates full-balance JIT sell orders for one resource token. |
+| `Silo` | Holds arbitrary fee tokens. It validates full-balance JIT sell orders with a resource-denominated minimum. |
 | `SiloFactory` | Deploys Silo instances with CREATE2. It emits discovery events. It has no control over a Silo. |
 | `Burner` | Receives one resource token. Any account can move its full balance to `0x…dEaD`. |
 | Solver SDK | Builds canonical orders, ERC-1271 payloads, order hashes, and commit interactions. |
@@ -37,13 +37,13 @@ flowchart LR
 
 1. A protocol sends fee tokens to a Silo.
 2. Solvers read the Silo balance.
-3. Each solver builds a JIT order and selects a buy amount.
-4. The solver adds `Silo.commit` as a settlement pre-interaction.
+3. Each solver reads the current minimum buy amount and builds a JIT order at or above that value.
+4. The solver adds one `Silo.commit` pre-interaction for each Silo order in the settlement.
 5. CoW Protocol scores the solutions.
 6. The winning settlement sells the full token balance.
 7. The settlement sends the resource token to the fixed recipient.
 
-The Silo checks the token pair, recipient, full balance, expiry, app data, fee, order kind, and balance type. The Silo does not check a market price. The CoW competition is the price-discovery mechanism.
+The Silo checks the token pair, recipient, full balance, minimum buy amount, expiry, app data, fee, order kind, and balance type. The minimum is denominated in the resource token. It is an execution floor, not a market-price oracle. The owner can update only this minimum. CoW competition is the price-discovery mechanism.
 
 ## Development
 
@@ -80,7 +80,7 @@ forge script script/DeploySilo.s.sol:DeploySilo \
   --rpc-url "$RPC_URL" --broadcast --verify
 ```
 
-Use the Burner address as `RESOURCE_RECIPIENT` when the resource token must leave circulation. Deploy the Burner first.
+Set `MINIMUM_BUY_AMOUNT` in the resource token's smallest unit. Use the Burner address as `RESOURCE_RECIPIENT` when the resource token must leave circulation. Deploy the Burner first.
 
 No official Silo deployment exists. See [the deployment registry](./deployments/addresses.json).
 

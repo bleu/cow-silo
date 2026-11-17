@@ -2,63 +2,55 @@
 pragma solidity 0.8.26;
 
 import { IERC1271 } from "@openzeppelin/contracts/interfaces/IERC1271.sol";
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import { Ownable2Step } from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import { IERC20 as OZIERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { IERC20 } from "cowprotocol/contracts/interfaces/IERC20.sol";
 import { GPv2Order } from "cowprotocol/contracts/libraries/GPv2Order.sol";
 
 import { ISettlement } from "./interfaces/ISettlement.sol";
+import { ISilo } from "./interfaces/ISilo.sol";
 
 /// @title Silo
 /// @notice Holds fee tokens and exposes them as surplus-capturing CoW JIT liquidity.
-/// @dev A solver sets the limit price. CoW Protocol competition discovers the execution price.
-contract Silo is IERC1271 {
+/// @dev The configured minimum buy amount is a resource-denominated execution floor, not a price oracle.
+contract Silo is ISilo, Ownable2Step {
     using GPv2Order for GPv2Order.Data;
     using SafeERC20 for OZIERC20;
 
     uint32 public constant MAX_ORDER_DURATION = 5 minutes;
 
-    /// @dev keccak256("cow-silo.Silo.commitment") - 1.
-    uint256 private constant COMMITMENT_SLOT = 0x75193d16aee65c51188ac93f69a9942a7b1a28a71ef161c2d98e14750d4aedc8;
+    bytes32 private constant COMMITMENT_NAMESPACE = keccak256("cow-silo.Silo.commitment");
 
-    ISettlement public immutable settlement;
-    address public immutable vaultRelayer;
-    IERC20 public immutable resourceToken;
-    address public immutable resourceRecipient;
-    bytes32 public immutable appData;
-    bytes32 public immutable domainSeparator;
+    ISettlement public immutable override settlement;
+    address public immutable override vaultRelayer;
+    IERC20 public immutable override resourceToken;
+    address public immutable override resourceRecipient;
+    bytes32 public immutable override appData;
+    bytes32 public immutable override domainSeparator;
+    uint256 public override minimumBuyAmount;
 
-    event OrderCommitted(bytes32 indexed orderHash, address indexed sellToken, uint256 sellAmount);
-    event TokenApproved(address indexed token, address indexed spender);
-
-    error BalanceChanged(uint256 expected, uint256 actual);
-    error CommitOutsideSettlement();
-    error EmptyBalance();
-    error InvalidAppData();
-    error InvalidBalanceType();
-    error InvalidBuyAmount();
-    error InvalidBuyToken();
-    error InvalidCommitment();
-    error InvalidFee();
-    error InvalidKind();
-    error InvalidOrderHash();
-    error InvalidReceiver();
-    error InvalidSellToken();
-    error InvalidValidity();
-    error OrderIsPartiallyFillable();
-    error ZeroAddress();
-
-    constructor(ISettlement settlement_, IERC20 resourceToken_, address resourceRecipient_, bytes32 appData_) {
+    constructor(
+        ISettlement settlement_,
+        IERC20 resourceToken_,
+        address resourceRecipient_,
+        uint256 minimumBuyAmount_,
+        bytes32 appData_,
+        address initialOwner
+    ) Ownable(initialOwner) {
         if (
             address(settlement_) == address(0) || address(resourceToken_) == address(0)
                 || resourceRecipient_ == address(0)
         ) {
             revert ZeroAddress();
         }
+        if (minimumBuyAmount_ == 0) revert InvalidMinimumBuyAmount();
 
         settlement = settlement_;
         resourceToken = resourceToken_;
         resourceRecipient = resourceRecipient_;
+        minimumBuyAmount = minimumBuyAmount_;
         appData = appData_;
         domainSeparator = settlement_.domainSeparator();
 
@@ -67,9 +59,19 @@ contract Silo is IERC1271 {
         vaultRelayer = vaultRelayer_;
     }
 
-    /// @notice Commits this settlement transaction to one exact Silo order.
-    /// @dev A solver must add this call as a pre-interaction. Transient storage clears after the transaction.
-    function commit(bytes32 orderHash, OZIERC20 sellToken, uint256 sellAmount) external {
+    /// @inheritdoc ISilo
+    function setMinimumBuyAmount(uint256 newMinimumBuyAmount) external override onlyOwner {
+        if (newMinimumBuyAmount == 0) revert InvalidMinimumBuyAmount();
+
+        uint256 previousAmount = minimumBuyAmount;
+        minimumBuyAmount = newMinimumBuyAmount;
+        emit MinimumBuyAmountSet(previousAmount, newMinimumBuyAmount);
+    }
+
+    /// @inheritdoc ISilo
+    /// @dev A solver adds one call per order as a pre-interaction. Commitments use separate transient slots and
+    /// therefore do not overwrite other Silo orders in the same settlement transaction.
+    function commit(bytes32 orderHash, OZIERC20 sellToken, uint256 sellAmount) external override {
         if (msg.sender != address(settlement)) revert CommitOutsideSettlement();
         if (address(sellToken) == address(0) || address(sellToken) == address(resourceToken)) {
             revert InvalidSellToken();
@@ -84,24 +86,25 @@ contract Silo is IERC1271 {
             emit TokenApproved(address(sellToken), vaultRelayer);
         }
 
+        bytes32 slot = _commitmentSlot(orderHash);
         assembly ("memory-safe") {
-            tstore(COMMITMENT_SLOT, orderHash)
+            tstore(slot, 1)
         }
         emit OrderCommitted(orderHash, address(sellToken), sellAmount);
     }
 
     /// @inheritdoc IERC1271
-    function isValidSignature(bytes32 hash, bytes calldata signature) external view returns (bytes4) {
+    function isValidSignature(bytes32 hash, bytes calldata signature) external view override returns (bytes4) {
         GPv2Order.Data memory order = abi.decode(signature, (GPv2Order.Data));
         if (order.hash(domainSeparator) != hash) revert InvalidOrderHash();
-        if (commitment() != hash) revert InvalidCommitment();
+        if (!isCommitted(hash)) revert InvalidCommitment();
 
         verify(order);
         return IERC1271.isValidSignature.selector;
     }
 
-    /// @notice Checks the permanent Silo order rules.
-    function verify(GPv2Order.Data memory order) public view {
+    /// @inheritdoc ISilo
+    function verify(GPv2Order.Data memory order) public view override {
         if (address(order.sellToken) == address(0) || order.sellToken == resourceToken) revert InvalidSellToken();
         if (order.buyToken != resourceToken) revert InvalidBuyToken();
         if (order.receiver != resourceRecipient) revert InvalidReceiver();
@@ -109,7 +112,10 @@ contract Silo is IERC1271 {
         uint256 balance = OZIERC20(address(order.sellToken)).balanceOf(address(this));
         if (balance == 0) revert EmptyBalance();
         if (order.sellAmount != balance) revert BalanceChanged(order.sellAmount, balance);
-        if (order.buyAmount == 0) revert InvalidBuyAmount();
+        uint256 minimumBuyAmount_ = minimumBuyAmount;
+        if (order.buyAmount < minimumBuyAmount_) {
+            revert BuyAmountBelowMinimum(order.buyAmount, minimumBuyAmount_);
+        }
 
         if (order.validTo < block.timestamp || order.validTo > block.timestamp + MAX_ORDER_DURATION) {
             revert InvalidValidity();
@@ -123,10 +129,17 @@ contract Silo is IERC1271 {
         }
     }
 
-    /// @notice Returns the order hash that is valid in the current transaction.
-    function commitment() public view returns (bytes32 value) {
+    /// @inheritdoc ISilo
+    function isCommitted(bytes32 orderHash) public view override returns (bool committed) {
+        bytes32 slot = _commitmentSlot(orderHash);
+        uint256 value;
         assembly ("memory-safe") {
-            value := tload(COMMITMENT_SLOT)
+            value := tload(slot)
         }
+        committed = value == 1;
+    }
+
+    function _commitmentSlot(bytes32 orderHash) private pure returns (bytes32) {
+        return keccak256(abi.encode(COMMITMENT_NAMESPACE, orderHash));
     }
 }

@@ -31,7 +31,7 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - run: forge fmt --check
-      - run: forge test
+      - run: FOUNDRY_PROFILE=ci forge test
       - run: pnpm --filter @cow-silo/sdk typecheck
       - run: pnpm --filter @cow-silo/sdk test
       - run: pnpm build

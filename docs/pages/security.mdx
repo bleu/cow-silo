@@ -8,19 +8,27 @@ The Silo enforces these rules:
 - The buy token is the resource token.
 - The receiver is the fixed resource recipient.
 - The sell amount equals the complete current balance.
-- The buy amount is greater than zero.
+- The buy amount meets the current resource-denominated minimum.
 - The order expires in five minutes or less.
 - The app data matches the fixed app data.
 - The fee is zero.
 - The order is a fill-or-kill sell order.
 - Both balance types are ERC-20.
-- The Settlement contract committed the exact order hash in the same transaction.
+- The Settlement contract committed each exact order hash in the same transaction.
+
+Each order uses a separate transient-storage commitment. Committing a second order does not invalidate the first order.
+
+## Administrative control
+
+The Silo uses two-step ownership. The owner can change only `minimumBuyAmount`. A zero minimum is not valid. The owner cannot change the resource token, recipient, Settlement contract, Vault Relayer, or app data. The owner cannot withdraw fee tokens.
+
+Renouncing ownership permanently freezes the current minimum. A production protocol should use its standard governance controls as the owner.
 
 ## Required external controls
 
 CoW Protocol authorizes solvers. CoW Protocol also controls the surplus-capturing JIT owner set. This set must include the production Silo deployment model.
 
-The Silo has no price oracle. Solver competition supplies price discovery. If competition fails, an order can use a poor limit price. Protocols must treat CoW configuration and solver diversity as security dependencies.
+The Silo has no price oracle. The minimum buy amount is an absolute output floor, not a price assertion. Solver competition supplies price discovery above that floor. If competition fails, an order can execute at its limit. Protocols must treat the selected minimum, CoW configuration, and solver diversity as security dependencies.
 
 ## Token behavior
 
