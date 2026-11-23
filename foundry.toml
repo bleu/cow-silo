@@ -10,6 +10,9 @@ bytecode_hash = "none"
 cbor_metadata = false
 fs_permissions = [{ access = "read-write", path = "./deployments" }]
 
+[profile.mainnet]
+test = "integration/mainnet"
+
 [profile.ci]
 fuzz = { runs = 2_000 }
 invariant = { runs = 256, depth = 64 }

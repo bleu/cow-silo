@@ -9,10 +9,18 @@ import { IERC20 } from "cowprotocol/contracts/interfaces/IERC20.sol";
 import { GPv2Order } from "cowprotocol/contracts/libraries/GPv2Order.sol";
 
 import { Silo } from "../src/Silo.sol";
+import { ApprovalFundingAdapter } from "../src/ApprovalFundingAdapter.sol";
 import { ISettlement } from "../src/interfaces/ISettlement.sol";
 import { ISilo } from "../src/interfaces/ISilo.sol";
+import { IFundingAdapter } from "../src/interfaces/IFundingAdapter.sol";
 import { MockERC20 } from "./mocks/MockERC20.sol";
 import { MockSettlement } from "./mocks/MockSettlement.sol";
+import {
+    RevertingFundingAdapter,
+    GasBurningFundingAdapter,
+    LargeReturnDataFundingAdapter,
+    TransferThenRevertFundingAdapter
+} from "./mocks/MockFundingAdapter.sol";
 
 contract SiloTest is Test {
     using GPv2Order for GPv2Order.Data;
@@ -49,6 +57,292 @@ contract SiloTest is Test {
         assertEq(silo.appData(), APP_DATA);
         assertEq(silo.domainSeparator(), DOMAIN_SEPARATOR);
         assertEq(silo.owner(), owner);
+    }
+
+    function testOwnerCanSetFundingAdapter() public {
+        IFundingAdapter adapter = IFundingAdapter(makeAddr("fundingAdapter"));
+
+        vm.expectEmit(true, true, false, true, address(silo));
+        emit ISilo.FundingAdapterSet(address(0), address(adapter));
+        vm.prank(owner);
+        silo.setFundingAdapter(adapter);
+
+        assertEq(address(silo.fundingAdapter()), address(adapter));
+    }
+
+    function testSetFundingAdapterRejectsUnauthorizedCaller() public {
+        address caller = makeAddr("caller");
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, caller));
+        vm.prank(caller);
+        silo.setFundingAdapter(IFundingAdapter(makeAddr("fundingAdapter")));
+    }
+
+    function testCommitFundsEmptySiloAndValidatesOrder() public {
+        address source = makeAddr("source");
+        ApprovalFundingAdapter adapter = new ApprovalFundingAdapter(source, address(silo));
+        collected.mint(source, 100);
+        vm.prank(source);
+        collected.approve(address(adapter), 100);
+        vm.prank(owner);
+        silo.setFundingAdapter(adapter);
+        GPv2Order.Data memory order = validOrder(100, 20);
+
+        (bool observedCommitment, bytes4 result) = settlement.commitAndValidate(
+            silo, order.hash(DOMAIN_SEPARATOR), OZIERC20(address(collected)), 100, abi.encode(order)
+        );
+
+        assertTrue(observedCommitment);
+        assertEq(result, IERC1271.isValidSignature.selector);
+        assertEq(collected.balanceOf(source), 0);
+        assertEq(collected.balanceOf(address(silo)), 100);
+        assertEq(collected.allowance(address(silo), vaultRelayer), type(uint256).max);
+    }
+
+    function testCommitSellsCombinedInventory() public {
+        address source = makeAddr("source");
+        ApprovalFundingAdapter adapter = new ApprovalFundingAdapter(source, address(silo));
+        collected.mint(address(silo), 40);
+        collected.mint(source, 60);
+        vm.prank(source);
+        collected.approve(address(adapter), 60);
+        vm.prank(owner);
+        silo.setFundingAdapter(adapter);
+        GPv2Order.Data memory order = validOrder(100, 20);
+
+        (, bytes4 result) = settlement.commitAndValidate(
+            silo, order.hash(DOMAIN_SEPARATOR), OZIERC20(address(collected)), 100, abi.encode(order)
+        );
+
+        assertEq(result, IERC1271.isValidSignature.selector);
+        assertEq(collected.balanceOf(address(silo)), 100);
+        assertEq(collected.balanceOf(source), 0);
+    }
+
+    function testCommitIgnoresFundingRevertForPrefundedOrder() public {
+        RevertingFundingAdapter adapter = new RevertingFundingAdapter();
+        vm.prank(owner);
+        silo.setFundingAdapter(adapter);
+        collected.mint(address(silo), 100);
+        GPv2Order.Data memory order = validOrder(100, 20);
+
+        (, bytes4 result) = settlement.commitAndValidate(
+            silo, order.hash(DOMAIN_SEPARATOR), OZIERC20(address(collected)), 100, abi.encode(order)
+        );
+
+        assertEq(result, IERC1271.isValidSignature.selector);
+    }
+
+    function testCommitSurvivesAdapterExhaustingForwardedGas() public {
+        GasBurningFundingAdapter adapter = new GasBurningFundingAdapter();
+        vm.prank(owner);
+        silo.setFundingAdapter(adapter);
+        collected.mint(address(silo), 100);
+        GPv2Order.Data memory order = validOrder(100, 20);
+
+        (, bytes4 result) = settlement.commitAndValidate{ gas: 500_000 }(
+            silo, order.hash(DOMAIN_SEPARATOR), OZIERC20(address(collected)), 100, abi.encode(order)
+        );
+
+        assertEq(result, IERC1271.isValidSignature.selector);
+    }
+
+    function testCommitIgnoresLargeAdapterReturnData() public {
+        LargeReturnDataFundingAdapter adapter = new LargeReturnDataFundingAdapter(false);
+        vm.prank(owner);
+        silo.setFundingAdapter(adapter);
+        collected.mint(address(silo), 100);
+        GPv2Order.Data memory order = validOrder(100, 20);
+
+        (, bytes4 result) = settlement.commitAndValidate{ gas: 350_000 }(
+            silo, order.hash(DOMAIN_SEPARATOR), OZIERC20(address(collected)), 100, abi.encode(order)
+        );
+
+        assertEq(result, IERC1271.isValidSignature.selector);
+    }
+
+    function testCommitIgnoresLargeAdapterRevertData() public {
+        LargeReturnDataFundingAdapter adapter = new LargeReturnDataFundingAdapter(true);
+        vm.prank(owner);
+        silo.setFundingAdapter(adapter);
+        collected.mint(address(silo), 100);
+        GPv2Order.Data memory order = validOrder(100, 20);
+
+        (, bytes4 result) = settlement.commitAndValidate{ gas: 350_000 }(
+            silo, order.hash(DOMAIN_SEPARATOR), OZIERC20(address(collected)), 100, abi.encode(order)
+        );
+
+        assertEq(result, IERC1271.isValidSignature.selector);
+    }
+
+    function testCommitBalanceMismatchRollsBackFunding() public {
+        address source = makeAddr("source");
+        ApprovalFundingAdapter adapter = new ApprovalFundingAdapter(source, address(silo));
+        collected.mint(address(silo), 40);
+        collected.mint(source, 60);
+        vm.prank(source);
+        collected.approve(address(adapter), 60);
+        vm.prank(owner);
+        silo.setFundingAdapter(adapter);
+        GPv2Order.Data memory order = validOrder(99, 20);
+        bytes32 digest = order.hash(DOMAIN_SEPARATOR);
+
+        vm.expectRevert(abi.encodeWithSelector(ISilo.BalanceChanged.selector, 99, 100));
+        settlement.commitAndValidate(silo, digest, OZIERC20(address(collected)), 99, abi.encode(order));
+
+        assertEq(collected.balanceOf(source), 60);
+        assertEq(collected.balanceOf(address(silo)), 40);
+        assertEq(collected.allowance(source, address(adapter)), 60);
+        assertEq(collected.allowance(address(silo), vaultRelayer), 0);
+        assertFalse(silo.isCommitted(digest));
+    }
+
+    function testFundedOrderBelowMinimumRollsBackFunding() public {
+        address source = makeAddr("source");
+        ApprovalFundingAdapter adapter = new ApprovalFundingAdapter(source, address(silo));
+        collected.mint(source, 100);
+        vm.prank(source);
+        collected.approve(address(adapter), 100);
+        vm.prank(owner);
+        silo.setFundingAdapter(adapter);
+        GPv2Order.Data memory order = validOrder(100, MINIMUM_BUY_AMOUNT - 1);
+        bytes32 digest = order.hash(DOMAIN_SEPARATOR);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(ISilo.BuyAmountBelowMinimum.selector, MINIMUM_BUY_AMOUNT - 1, MINIMUM_BUY_AMOUNT)
+        );
+        settlement.commitAndValidate(silo, digest, OZIERC20(address(collected)), 100, abi.encode(order));
+
+        assertEq(collected.balanceOf(source), 100);
+        assertEq(collected.balanceOf(address(silo)), 0);
+        assertEq(collected.allowance(source, address(adapter)), 100);
+        assertEq(collected.allowance(address(silo), vaultRelayer), 0);
+        assertFalse(silo.isCommitted(digest));
+    }
+
+    function testCommitUsesReplacementAdapter() public {
+        address oldSource = makeAddr("oldSource");
+        address newSource = makeAddr("newSource");
+        ApprovalFundingAdapter oldAdapter = new ApprovalFundingAdapter(oldSource, address(silo));
+        ApprovalFundingAdapter newAdapter = new ApprovalFundingAdapter(newSource, address(silo));
+        collected.mint(oldSource, 60);
+        collected.mint(newSource, 80);
+        vm.prank(oldSource);
+        collected.approve(address(oldAdapter), 60);
+        vm.prank(newSource);
+        collected.approve(address(newAdapter), 80);
+        vm.startPrank(owner);
+        silo.setFundingAdapter(oldAdapter);
+        silo.setFundingAdapter(newAdapter);
+        vm.stopPrank();
+        GPv2Order.Data memory order = validOrder(80, 20);
+
+        (, bytes4 result) = settlement.commitAndValidate(
+            silo, order.hash(DOMAIN_SEPARATOR), OZIERC20(address(collected)), 80, abi.encode(order)
+        );
+
+        assertEq(result, IERC1271.isValidSignature.selector);
+        assertEq(collected.balanceOf(oldSource), 60);
+        assertEq(collected.balanceOf(newSource), 0);
+        assertEq(collected.balanceOf(address(silo)), 80);
+    }
+
+    function testCommitSkipsDisabledAdapter() public {
+        address source = makeAddr("source");
+        ApprovalFundingAdapter adapter = new ApprovalFundingAdapter(source, address(silo));
+        collected.mint(source, 60);
+        collected.mint(address(silo), 40);
+        vm.prank(source);
+        collected.approve(address(adapter), 60);
+        vm.startPrank(owner);
+        silo.setFundingAdapter(adapter);
+        silo.setFundingAdapter(IFundingAdapter(address(0)));
+        vm.stopPrank();
+        GPv2Order.Data memory order = validOrder(40, 20);
+
+        (, bytes4 result) = settlement.commitAndValidate(
+            silo, order.hash(DOMAIN_SEPARATOR), OZIERC20(address(collected)), 40, abi.encode(order)
+        );
+
+        assertEq(result, IERC1271.isValidSignature.selector);
+        assertEq(collected.balanceOf(source), 60);
+        assertEq(collected.balanceOf(address(silo)), 40);
+        assertEq(address(silo.fundingAdapter()), address(0));
+    }
+
+    function testAdapterRevertRollsBackItsTransferButNotCommitment() public {
+        address source = makeAddr("source");
+        TransferThenRevertFundingAdapter adapter = new TransferThenRevertFundingAdapter(source);
+        collected.mint(source, 60);
+        collected.mint(address(silo), 40);
+        vm.prank(source);
+        collected.approve(address(adapter), 60);
+        vm.prank(owner);
+        silo.setFundingAdapter(adapter);
+        GPv2Order.Data memory order = validOrder(40, 20);
+
+        (, bytes4 result) = settlement.commitAndValidate(
+            silo, order.hash(DOMAIN_SEPARATOR), OZIERC20(address(collected)), 40, abi.encode(order)
+        );
+
+        assertEq(result, IERC1271.isValidSignature.selector);
+        assertEq(collected.balanceOf(source), 60);
+        assertEq(collected.allowance(source, address(adapter)), 60);
+        assertEq(collected.balanceOf(address(silo)), 40);
+    }
+
+    function testCommitRejectsInsufficientBalanceAfterFundingFailure() public {
+        RevertingFundingAdapter adapter = new RevertingFundingAdapter();
+        vm.prank(owner);
+        silo.setFundingAdapter(adapter);
+        collected.mint(address(silo), 40);
+        GPv2Order.Data memory order = validOrder(100, 20);
+        bytes32 digest = order.hash(DOMAIN_SEPARATOR);
+
+        vm.expectRevert(abi.encodeWithSelector(ISilo.BalanceChanged.selector, 100, 40));
+        settlement.commitAndValidate(silo, digest, OZIERC20(address(collected)), 100, abi.encode(order));
+
+        assertFalse(silo.isCommitted(digest));
+    }
+
+    function testFuzzCommitCombinesExistingAndApprovedInventory(uint128 existing, uint128 approved) public {
+        approved = uint128(bound(approved, 1, type(uint128).max));
+        address source = makeAddr("source");
+        ApprovalFundingAdapter adapter = new ApprovalFundingAdapter(source, address(silo));
+        collected.mint(address(silo), existing);
+        collected.mint(source, uint256(approved) * 2);
+        vm.prank(source);
+        collected.approve(address(adapter), approved);
+        vm.prank(owner);
+        silo.setFundingAdapter(adapter);
+        uint256 amount = uint256(existing) + approved;
+        GPv2Order.Data memory order = validOrder(amount, 20);
+
+        (, bytes4 result) = settlement.commitAndValidate(
+            silo, order.hash(DOMAIN_SEPARATOR), OZIERC20(address(collected)), amount, abi.encode(order)
+        );
+
+        assertEq(result, IERC1271.isValidSignature.selector);
+        assertEq(collected.balanceOf(address(silo)), amount);
+        assertEq(collected.balanceOf(source), approved);
+        assertEq(collected.allowance(source, address(adapter)), 0);
+    }
+
+    function testCommitValidatesPrefundedOrderWithoutSourceAllowance() public {
+        address source = makeAddr("source");
+        ApprovalFundingAdapter adapter = new ApprovalFundingAdapter(source, address(silo));
+        collected.mint(source, 60);
+        collected.mint(address(silo), 40);
+        vm.prank(owner);
+        silo.setFundingAdapter(adapter);
+        GPv2Order.Data memory order = validOrder(40, 20);
+
+        (, bytes4 result) = settlement.commitAndValidate(
+            silo, order.hash(DOMAIN_SEPARATOR), OZIERC20(address(collected)), 40, abi.encode(order)
+        );
+
+        assertEq(result, IERC1271.isValidSignature.selector);
+        assertEq(collected.balanceOf(source), 60);
+        assertEq(collected.balanceOf(address(silo)), 40);
     }
 
     function testCommitApprovesRelayerAndMakesSignatureValid() public {

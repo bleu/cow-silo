@@ -17,6 +17,7 @@ The contracts are small. They do not contain a token registry, an oracle, a rout
 | --- | --- |
 | `Silo` | Holds arbitrary fee tokens. It validates full-balance JIT sell orders with a resource-denominated minimum. |
 | `SiloFactory` | Deploys Silo instances with CREATE2. It emits discovery events. It has no control over a Silo. |
+| `ApprovalFundingAdapter` | Pulls approved source inventory into one Silo during `commit`. |
 | `Burner` | Receives one resource token. Any account can move its full balance to `0x…dEaD`. |
 | Solver SDK | Builds canonical orders, ERC-1271 payloads, order hashes, and commit interactions. |
 
@@ -35,15 +36,19 @@ flowchart LR
 
 ## How the order works
 
-1. A protocol sends fee tokens to a Silo.
-2. Solvers read the Silo balance.
+1. A protocol sends fee tokens to a Silo or configures an optional funding adapter.
+2. Solvers read the Silo balance and any expected adapter funding.
 3. Each solver reads the current minimum buy amount and builds a JIT order at or above that value.
 4. The solver adds one `Silo.commit` pre-interaction for each Silo order in the settlement.
 5. CoW Protocol scores the solutions.
 6. The winning settlement sells the full token balance.
 7. The settlement sends the resource token to the fixed recipient.
 
-The Silo checks the token pair, recipient, full balance, minimum buy amount, expiry, app data, fee, order kind, and balance type. The minimum is denominated in the resource token. It is an execution floor, not a market-price oracle. The owner can update only this minimum. CoW competition is the price-discovery mechanism.
+The Silo checks the token pair, recipient, full balance after funding, minimum buy amount, expiry, app data, fee, order kind, and balance type. The minimum is denominated in the resource token. It is an execution floor, not a market-price oracle. The owner can update the minimum and replace or disable the funding adapter. CoW competition is the price-discovery mechanism.
+
+Funding is disabled by default. The owner can enable it with `setFundingAdapter`. During `commit`, the Silo attempts `fund(sellToken)` with a fixed 200,000 gas cap before checking its exact balance. It ignores adapter failure and return data. The cap does not guarantee success if the outer transaction has too little gas. Without funding, the prefunded Silo balance must still equal the order's sell amount.
+
+`ApprovalFundingAdapter` has a fixed source and Silo recipient. The source approves the adapter, not the Silo or Vault Relayer. It transfers `min(source balance, source allowance to adapter)` into the Silo. Solvers must build the order for the current Silo balance plus expected funding and simulate the commit. Changes to inventory, allowances, or adapter configuration can make the exact-amount check revert. Source transfers roll back if the outer transaction reverts. A successful commit can leave funded inventory in the Silo without a sale. Replacing or disabling an adapter does not revoke source allowances. See the [protocol guide](./docs/pages/actors/protocols.mdx).
 
 ## Development
 
@@ -60,6 +65,8 @@ forge test
 pnpm test
 pnpm build
 ```
+
+Run the optional [mainnet fork tests](./integration/mainnet/README.md) with `pnpm test:mainnet`. They use a public RPC and execute complete trades through the deployed Settlement and Vault Relayer on a local fork. The default tests remain offline.
 
 Run the documentation site:
 

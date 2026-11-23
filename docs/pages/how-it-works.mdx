@@ -2,11 +2,13 @@
 
 ## Collection
 
-A protocol transfers any ERC-20 fee token to its Silo address. The Silo does not call the protocol. The Silo does not index the token.
+A protocol can transfer ERC-20 fee tokens directly to its Silo address. The Silo does not index tokens. Funding is disabled by default.
+
+The owner can instead configure a funding adapter with `setFundingAdapter`. `ApprovalFundingAdapter` pulls inventory from a fixed source into a fixed Silo. The source approves the adapter, not the Silo or Vault Relayer. Its available amount is the smaller of the source balance and allowance to the adapter.
 
 ## Discovery
 
-Solvers index `SiloCreated` events from `SiloFactory`. They read token balances and the current minimum buy amount from each Silo.
+Solvers index `SiloCreated` events from `SiloFactory`. They read token balances, the current minimum buy amount, and the configured funding adapter from each Silo. With funding enabled, the solver adds expected adapter funding to the current Silo balance to select `sellAmount`. `IFundingAdapter` has no required quote method; `availableBalance` is specific to `ApprovalFundingAdapter`.
 
 ## Competition
 
@@ -18,7 +20,11 @@ CoW Protocol scores competing settlements. A higher execution value improves the
 
 ## Settlement
 
-The solution contains one pre-interaction for each Silo order. Each pre-interaction calls `Silo.commit` through the CoW Settlement contract. The call records the order hash in a dedicated transient-storage slot. It also approves the Vault Relayer when required.
+The solution contains one pre-interaction for each Silo order. Each pre-interaction calls `Silo.commit` through the CoW Settlement contract. After checking the caller, token, and positive amount, the Silo attempts `fund(sellToken)` if an adapter is configured. The call has a fixed 200,000 gas cap. Failure and return data are ignored. A zero adapter skips funding.
+
+The Silo then requires its actual token balance to equal the supplied sell amount. It approves the Vault Relayer when required and records the order hash in a dedicated transient-storage slot. If funding fails, prefunded inventory must still match the order amount exactly. Solvers must simulate the commit as part of the settlement; `verify` alone checks only the current balance and does not fund the Silo.
+
+A valid commit can move source inventory into the Silo without a later trade. Funding rolls back if the outer transaction reverts, but a successful transaction can leave the funded tokens in the Silo.
 
 The Settlement contract then verifies each ERC-1271 signature. The Silo accepts only committed orders. Several independent Silo orders can execute in one settlement. Transient storage clears at the end of the transaction.
 
