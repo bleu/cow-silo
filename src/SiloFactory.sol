@@ -22,20 +22,38 @@ contract SiloFactory is ISiloFactory {
     function createSilo(
         IERC20 resourceToken,
         address resourceRecipient,
+        uint256 initialBuyAmount,
         uint256 minimumBuyAmount,
+        uint32 auctionDuration,
         bytes32 appData,
         bytes32 userSalt
     ) external override returns (ISilo silo) {
+        if (initialBuyAmount == minimumBuyAmount) auctionDuration = 0;
         bytes32 salt_ = salt(msg.sender, userSalt);
         silo = ISilo(
             address(
                 new Silo{ salt: salt_ }(
-                    settlement, resourceToken, resourceRecipient, minimumBuyAmount, appData, msg.sender
+                    settlement,
+                    resourceToken,
+                    resourceRecipient,
+                    initialBuyAmount,
+                    minimumBuyAmount,
+                    auctionDuration,
+                    appData,
+                    msg.sender
                 )
             )
         );
         emit SiloCreated(
-            address(silo), msg.sender, address(resourceToken), resourceRecipient, minimumBuyAmount, appData, userSalt
+            address(silo),
+            msg.sender,
+            address(resourceToken),
+            resourceRecipient,
+            initialBuyAmount,
+            minimumBuyAmount,
+            auctionDuration,
+            appData,
+            userSalt
         );
     }
 
@@ -44,21 +62,43 @@ contract SiloFactory is ISiloFactory {
         address owner,
         IERC20 resourceToken,
         address resourceRecipient,
+        uint256 initialBuyAmount,
         uint256 minimumBuyAmount,
+        uint32 auctionDuration,
         bytes32 appData,
         bytes32 userSalt
     ) external view override returns (address predicted) {
-        bytes32 initCodeHash = keccak256(
-            abi.encodePacked(
-                type(Silo).creationCode,
-                abi.encode(settlement, resourceToken, resourceRecipient, minimumBuyAmount, appData, owner)
-            )
+        if (initialBuyAmount == minimumBuyAmount) auctionDuration = 0;
+        bytes32 initCodeHash = _initCodeHash(
+            owner, resourceToken, resourceRecipient, initialBuyAmount, minimumBuyAmount, auctionDuration, appData
         );
         predicted = address(
             uint160(
                 uint256(keccak256(abi.encodePacked(bytes1(0xff), address(this), salt(owner, userSalt), initCodeHash)))
             )
         );
+    }
+
+    function _initCodeHash(
+        address owner,
+        IERC20 resourceToken,
+        address resourceRecipient,
+        uint256 initialBuyAmount,
+        uint256 minimumBuyAmount,
+        uint32 auctionDuration,
+        bytes32 appData
+    ) private view returns (bytes32) {
+        bytes memory args = abi.encode(
+            settlement,
+            resourceToken,
+            resourceRecipient,
+            initialBuyAmount,
+            minimumBuyAmount,
+            auctionDuration,
+            appData,
+            owner
+        );
+        return keccak256(bytes.concat(type(Silo).creationCode, args));
     }
 
     /// @inheritdoc ISiloFactory

@@ -1,32 +1,61 @@
 # Solver SDK
 
-The TypeScript package is `@cow-silo/sdk`.
+`@cow-silo/sdk` builds CoW JIT orders and Settlement pre-interactions. It does not fetch chain state. Use one block for the Silo balance, expected adapter funding, auction quote, and timestamp. Use `bigint` for token amounts and whole seconds for timestamps and durations.
 
-It provides these functions:
+## Build a full-balance order
 
-| Function | Result |
+The example uses a viem public client, `client`. Supply the Silo address, sell token, immutable resource token, recipient, and app data. Set `sellAmount` to the Silo balance plus expected funding at `block.number`. For `ApprovalFundingAdapter`, expected funding is `availableBalance(sellToken)`. Use zero when the adapter is disabled.
+
+```ts
+import {
+  buildCommitInteraction,
+  buildOrder,
+  buildOrderDeadlines,
+  siloAbi,
+  toSolverJitOrder,
+} from "@cow-silo/sdk";
+
+const block = await client.getBlock({ blockTag: "latest" });
+const atBlock = { address: silo, abi: siloAbi, blockNumber: block.number };
+const currentMinimumBuyAmount = await client.readContract({
+  ...atBlock,
+  functionName: "currentMinimumBuyAmount",
+  args: [sellToken],
+});
+const auctionDuration = await client.readContract({
+  ...atBlock,
+  functionName: "auctionDuration",
+});
+const { executionDeadline, validTo } = buildOrderDeadlines({
+  blockTimestamp: Number(block.timestamp),
+  executionWindow: 300,
+  auctionDuration,
+});
+const order = buildOrder({
+  sellToken, resourceToken, resourceRecipient, sellAmount,
+  buyAmount: currentMinimumBuyAmount,
+  currentMinimumBuyAmount, validTo, appData,
+});
+const jitOrder = toSolverJitOrder(silo, order);
+const preInteraction = buildCommitInteraction(silo, order);
+```
+
+Use `executionDeadline` as the last timestamp at which the Silo can execute this order. The helper accepts execution windows of 0 through 300 seconds. It returns `validTo = executionDeadline + auctionDuration`. For example, at timestamp 100000 with a 300-second window and a 7200-second auction, the Silo deadline is 100300 and CoW `validTo` is 107500. The extra time keeps Settlement's fill record available until the restarted curve reaches the floor. A flat floor has an effective duration of zero, so both deadlines are equal. Check the chosen `validTo` against the intended driver's JIT order rules.
+
+`buildOrder` rejects a buy amount below the supplied quote. You can set a higher limit. Simulate the full settlement before submission: a new sale of the same token can raise the quote, and a balance or allowance change can invalidate `sellAmount`.
+
+## Encoding and batch helpers
+
+| Helper | Use |
 | --- | --- |
-| `buildOrder` | Canonical Silo order data. |
-| `encodeOrderPayload` | Raw ERC-1271 payload for `Silo.isValidSignature`. |
-| `encodeSolverSignature` | CoW solver API signature with the Silo owner prefix. |
-| `hashOrder` | CoW EIP-712 order digest from a Settlement domain separator. |
-| `buildCommitInteraction` | Pre-interaction for `Silo.commit`. |
-| `buildCommitInteractions` | Pre-interactions for several independent Silo orders. |
-| `toSolverJitOrder` | Current CoW solver API JIT order object. |
+| `encodeOrderPayload(order)` | Raw ERC-1271 payload for `Silo.isValidSignature`. |
+| `encodeSolverSignature(silo, order)` | Prefix the payload with the 20-byte Silo address for the solver API. |
+| `hashOrder(order, domainSeparator)` | Compute the order digest using the Settlement domain separator. |
+| `buildCommitInteraction(silo, order)` | Encode `Silo.commit(order)` as a pre-interaction. The Silo computes the digest. |
+| `buildCommitInteractions(silo, orders)` | Build one pre-interaction per order. Use distinct sell tokens for the same Silo. |
+| `toSolverJitOrder(silo, order)` | Format the JIT order and its signature for the solver API. |
 
-The package uses `bigint` for token amounts. `buildOrder` requires the current `minimumBuyAmount` and rejects a lower limit. It remains a pure builder: it uses the supplied `sellAmount` and does not fetch balances, configuration, or prices. The solver controls those data sources.
-
-## Funding adapter ABI
-
-`siloAbi` includes `fundingAdapter()`, `setFundingAdapter(address)`, and `FUNDING_GAS_LIMIT()`. Funding starts disabled. Only the Silo owner can replace or disable the adapter.
-
-`approvalFundingAdapterAbi` exposes `source()`, `silo()`, `availableBalance(token)`, and `fund(token)`. The source must approve the adapter as spender, not the Silo or Vault Relayer. Only the configured Silo can call `fund`.
-
-For `ApprovalFundingAdapter`, set the order's `sellAmount` to the current Silo balance plus `availableBalance(sellToken)`. That view returns the smaller of the source balance and allowance to the adapter. Use zero expected funding when no adapter is configured. The shared `IFundingAdapter` interface requires only `fund(token)`; there is no mandatory quote method, amount argument, or arbitrary bytes input.
-
-These reads are estimates for order construction. Inventory, allowances, and adapter configuration can change before execution. `commit` attempts funding with a fixed 200,000 gas cap, ignores failure and return data, then requires the actual Silo balance to match `sellAmount` exactly. The cap does not guarantee success for an undergassed outer transaction. A prefunded fallback must still match the supplied amount. Simulate the complete settlement, including commit. A standalone `verify` checks only the current balance and does not fund the Silo.
-
-Run the SDK tests:
+For adapter permissions and funding estimates, see [Solvers](/actors/solvers). Run the SDK tests from the repository root:
 
 ```sh
 pnpm --filter @cow-silo/sdk test

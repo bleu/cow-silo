@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity 0.8.26;
 
-import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { GPv2Order } from "cowprotocol/contracts/libraries/GPv2Order.sol";
 
 import { Silo } from "../../src/Silo.sol";
 import { ISettlement } from "../../src/interfaces/ISettlement.sol";
 
 contract MockSettlement is ISettlement {
+    using GPv2Order for GPv2Order.Data;
+
     bytes32 public immutable override domainSeparator;
     address public immutable override vaultRelayer;
+    mapping(bytes orderUid => uint256) public override filledAmount;
 
     constructor(bytes32 domainSeparator_, address vaultRelayer_) {
         domainSeparator = domainSeparator_;
@@ -16,32 +19,27 @@ contract MockSettlement is ISettlement {
     }
 
     /// @dev Mirrors the CoW Settlement flow. Pre-interactions and signature checks share one transaction context.
-    function commitAndValidate(
-        Silo silo,
-        bytes32 digest,
-        IERC20 sellToken,
-        uint256 sellAmount,
-        bytes calldata signature
-    ) external returns (bool observedCommitment, bytes4 result) {
-        silo.commit(digest, sellToken, sellAmount);
-        observedCommitment = silo.isCommitted(digest);
-        result = silo.isValidSignature(digest, signature);
+    function commitAndValidate(Silo silo, GPv2Order.Data calldata order)
+        external
+        returns (bool observedCommitment, bytes4 result)
+    {
+        silo.commit(order);
+        return _validate(silo, order);
     }
 
     /// @dev Commits and validates two orders in one simulated settlement transaction.
-    function commitAndValidateTwo(
-        Silo silo,
-        bytes32[2] calldata digests,
-        IERC20[2] calldata sellTokens,
-        uint256[2] calldata sellAmounts,
-        bytes[2] calldata signatures
-    ) external returns (bool[2] memory observedCommitments, bytes4[2] memory results) {
-        silo.commit(digests[0], sellTokens[0], sellAmounts[0]);
-        silo.commit(digests[1], sellTokens[1], sellAmounts[1]);
+    function commitAndValidateTwo(Silo silo, GPv2Order.Data[2] calldata orders)
+        external
+        returns (bool[2] memory observedCommitments, bytes4[2] memory results)
+    {
+        silo.commit(orders[0]);
+        silo.commit(orders[1]);
+        (observedCommitments[0], results[0]) = _validate(silo, orders[0]);
+        (observedCommitments[1], results[1]) = _validate(silo, orders[1]);
+    }
 
-        observedCommitments[0] = silo.isCommitted(digests[0]);
-        observedCommitments[1] = silo.isCommitted(digests[1]);
-        results[0] = silo.isValidSignature(digests[0], signatures[0]);
-        results[1] = silo.isValidSignature(digests[1], signatures[1]);
+    function _validate(Silo silo, GPv2Order.Data calldata order) private view returns (bool, bytes4) {
+        bytes32 digest = order.hash(domainSeparator);
+        return (silo.isCommitted(digest), silo.isValidSignature(digest, abi.encode(order)));
     }
 }

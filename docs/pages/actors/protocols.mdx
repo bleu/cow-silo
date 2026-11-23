@@ -1,36 +1,23 @@
 # Protocols
 
-## Why use Silo
+A Silo lets solvers sell fee tokens for one resource token and send the output to a fixed recipient. Choose a treasury or Burner as the recipient. Before sending inventory, confirm that the intended CoW integration supports your Silo. Use direct ERC-20 transfers or configure a funding adapter. Do not send the resource token to the Silo: the Silo cannot sell it.
 
-Silo can convert many fee tokens into one treasury token. The protocol does not need to maintain routes or run a keeper. CoW solvers compete to provide the conversion.
+## Choose the required output
 
-## Integration
+Set `initialBuyAmount`, `minimumBuyAmount` (the floor), and `auctionDuration` at deployment. The amounts are in the resource token's smallest unit and apply to the **whole balance of one sell token**. They do not specify a price per unit. A deposit can double the amount for sale without changing the required output.
 
-1. Select the resource token.
-2. Select a treasury or deploy a Burner.
-3. Select a non-zero minimum buy amount in the resource token.
-4. Select an app data hash.
-5. Deploy a Silo through `SiloFactory`.
-6. Send fee tokens to the Silo or configure optional adapter funding.
-7. Confirm that CoW Protocol recognizes the Silo deployment model.
-8. Monitor settlements and received resource tokens.
+For a flat floor, set the two amounts equal. For a falling auction, set the initial amount above the nonzero floor and choose a positive duration in seconds. The clock starts at deployment, even for a token the Silo has never held. No token registration or keeper is needed. Use `currentMinimumBuyAmount(sellToken)` to read the required output for that token.
 
-Do not send the resource token to the Silo. The Silo cannot sell its resource token.
+During a falling auction, the Silo subtracts `floor((initialBuyAmount - minimumBuyAmount) * elapsed / auctionDuration)` from `initialBuyAmount`. Here `elapsed` is seconds since deployment or this token's last full sale. At or after `auctionDuration`, the required output stays at `minimumBuyAmount`.
+
+For example, with an initial output of 150 USDC, a floor of 100 USDC, and a duration of two hours, the required output is 125 USDC after one hour. After two hours it stays at 100 USDC until a full sale. If token A then sells, new inventory of A starts at 150 USDC at the sale timestamp. Token B stays at 100 USDC if it has not sold. A deposit, funding call, or commit without a fill does not restart either clock.
+
+These settings are immutable. To change them, deploy a new Silo and direct future inventory to it. Monitor Settlement fills and resource-token transfers to the recipient. An `OrderCommitted` event alone does not confirm a sale.
 
 ## Optional source funding
 
-A new Silo has no funding adapter. Direct transfers remain supported. To use approved source inventory, deploy `ApprovalFundingAdapter(source, silo)` with non-zero source and Silo addresses. Both addresses are immutable. The Silo owner then calls `setFundingAdapter(adapter)`. The source grants each sell-token allowance to the adapter, not to the Silo or Vault Relayer.
+A new Silo has no adapter. To use approved source inventory, deploy `ApprovalFundingAdapter(source, silo)` with nonzero addresses. The Silo owner calls `setFundingAdapter(adapter)`. The source grants each sell-token allowance to the adapter, not to the Silo or Vault Relayer.
 
-Only the fixed Silo can call the adapter's `fund(token)`. It transfers `min(source balance, source allowance to adapter)` into that Silo. Zero available inventory is a no-op. Source approval permits that inventory to move on a valid commit even if no trade follows. Do not use this approval when the source must retain the inventory until a completed sale.
+Only the configured Silo can call `fund(token)`. The adapter transfers the smaller of the source balance and its allowance. A successful commit can move inventory into the Silo even if no trade follows. Use this approval only if the source can release inventory before a sale. If the settlement transaction reverts, the transfer also reverts.
 
-The owner can replace the adapter or disable it with `setFundingAdapter(address(0))`. This does not revoke source allowances. Revoke the old adapter's allowances separately. A protocol-specific adapter must use the protocol's existing permissions; configuring an adapter does not grant a privileged withdrawal bypass.
-
-Solvers must use the current Silo balance plus expected adapter funding as the sell amount. Changes to inventory, allowances, or adapter configuration can invalidate that amount. The Silo attempts funding with a fixed 200,000 gas cap and ignores failure. An adapter that needs more gas can fail; any fallback prefunded balance must still match the order amount exactly. An outer transaction revert also rolls back the source transfer.
-
-## Minimum buy amount
-
-The Silo rejects orders whose `buyAmount` is below `minimumBuyAmount`. The value uses the resource token's smallest unit. For example, a USDC Silo can require a minimum USDC output, and a COW Silo can require a minimum COW output.
-
-The minimum applies to each full-balance order. It is not a USD value unless the resource token is a USD-denominated token. It is also not a fair-price oracle. CoW solver competition determines execution value above the minimum.
-
-The two-step owner can update the minimum. An update does not change the Silo address or its other order rules. Small balances remain in the Silo until a solver can meet the current minimum.
+The owner can replace the adapter or disable it with `setFundingAdapter(address(0))`. Revoke the old adapter's allowances separately. A custom adapter must use the source protocol's existing permissions.

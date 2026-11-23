@@ -53,20 +53,22 @@ export const KIND_SELL =
 export const BALANCE_ERC20 =
   "0x5a28e9363bb942b639270062aa6bb295f434bcdfc42c97267bf003f272060dc9" as const;
 
-const orderTuple = parseAbiParameters(
-  "(address sellToken, address buyToken, address receiver, uint256 sellAmount, uint256 buyAmount, uint32 validTo, bytes32 appData, uint256 feeAmount, bytes32 kind, bool partiallyFillable, bytes32 sellTokenBalance, bytes32 buyTokenBalance) order",
-);
+const orderParameter = "(address sellToken, address buyToken, address receiver, uint256 sellAmount, uint256 buyAmount, uint32 validTo, bytes32 appData, uint256 feeAmount, bytes32 kind, bool partiallyFillable, bytes32 sellTokenBalance, bytes32 buyTokenBalance) order";
+const orderTuple = parseAbiParameters(orderParameter);
 
 const orderHashParameters = parseAbiParameters(
   "bytes32 typeHash, address sellToken, address buyToken, address receiver, uint256 sellAmount, uint256 buyAmount, uint32 validTo, bytes32 appData, uint256 feeAmount, bytes32 kind, bool partiallyFillable, bytes32 sellTokenBalance, bytes32 buyTokenBalance",
 );
 
 export const siloAbi = parseAbi([
-  "function commit(bytes32 orderHash, address sellToken, uint256 sellAmount)",
+  `function commit(${orderParameter})`,
   "function domainSeparator() view returns (bytes32)",
   "function resourceToken() view returns (address)",
   "function resourceRecipient() view returns (address)",
+  "function initialBuyAmount() view returns (uint256)",
   "function minimumBuyAmount() view returns (uint256)",
+  "function auctionDuration() view returns (uint32)",
+  "function currentMinimumBuyAmount(address sellToken) view returns (uint256)",
   "function fundingAdapter() view returns (address)",
   "function setFundingAdapter(address newAdapter)",
   "function FUNDING_GAS_LIMIT() view returns (uint256)",
@@ -81,20 +83,47 @@ export const approvalFundingAdapterAbi = parseAbi([
   "function fund(address sellToken)",
 ]);
 
+function assertUint32(value: number, field: string): void {
+  if (!Number.isSafeInteger(value) || value < 0 || value > 0xffff_ffff) {
+    throw new Error(`${field} must be a uint32 integer`);
+  }
+}
+
+/** Use the chain's block timestamp and the effective duration from Silo.auctionDuration(), in seconds. */
+export function buildOrderDeadlines(input: {
+  blockTimestamp: number;
+  executionWindow: number;
+  auctionDuration: number;
+}): { executionDeadline: number; validTo: number } {
+  if (!Number.isSafeInteger(input.executionWindow) || input.executionWindow < 0 || input.executionWindow > 300) {
+    throw new Error("executionWindow must be an integer between 0 and 300 seconds");
+  }
+  assertUint32(input.blockTimestamp, "blockTimestamp");
+  assertUint32(input.auctionDuration, "auctionDuration");
+  const executionDeadline = input.blockTimestamp + input.executionWindow;
+  const validTo = executionDeadline + input.auctionDuration;
+  assertUint32(validTo, "validTo");
+  return { executionDeadline, validTo };
+}
+
 export function buildOrder(input: {
   sellToken: Address;
   resourceToken: Address;
   resourceRecipient: Address;
   sellAmount: bigint;
   buyAmount: bigint;
-  minimumBuyAmount: bigint;
+  /** Read currentMinimumBuyAmount(sellToken) from this Silo. */
+  currentMinimumBuyAmount: bigint;
   validTo: number;
   appData: Hex;
 }): SiloOrder {
+  assertUint32(input.validTo, "validTo");
   if (input.sellAmount <= 0n) throw new Error("sellAmount must be positive");
-  if (input.minimumBuyAmount <= 0n) throw new Error("minimumBuyAmount must be positive");
-  if (input.buyAmount < input.minimumBuyAmount) {
-    throw new Error("buyAmount must be at least minimumBuyAmount");
+  if (typeof input.currentMinimumBuyAmount !== "bigint" || input.currentMinimumBuyAmount <= 0n) {
+    throw new Error("currentMinimumBuyAmount must be a positive bigint");
+  }
+  if (input.buyAmount < input.currentMinimumBuyAmount) {
+    throw new Error("buyAmount must be at least currentMinimumBuyAmount");
   }
   if (input.sellToken.toLowerCase() === input.resourceToken.toLowerCase()) {
     throw new Error("sellToken must differ from resourceToken");
@@ -148,15 +177,14 @@ export function hashOrder(order: SiloOrder, domainSeparator: Hex): Hex {
   return keccak256(concatHex(["0x1901", domainSeparator, structHash]));
 }
 
-export function buildCommitInteraction(silo: Address, order: SiloOrder, domainSeparator: Hex): Interaction {
-  const orderHash = hashOrder(order, domainSeparator);
+export function buildCommitInteraction(silo: Address, order: SiloOrder): Interaction {
   return {
     target: silo,
     value: "0",
     callData: encodeFunctionData({
       abi: siloAbi,
       functionName: "commit",
-      args: [orderHash, order.sellToken, order.sellAmount],
+      args: [order],
     }),
   };
 }
@@ -165,9 +193,14 @@ export function buildCommitInteraction(silo: Address, order: SiloOrder, domainSe
 export function buildCommitInteractions(
   silo: Address,
   orders: readonly SiloOrder[],
-  domainSeparator: Hex,
 ): Interaction[] {
-  return orders.map((order) => buildCommitInteraction(silo, order, domainSeparator));
+  const sellTokens = new Set<string>();
+  return orders.map((order) => {
+    const token = order.sellToken.toLowerCase();
+    if (sellTokens.has(token)) throw new Error(`duplicate sellToken: ${order.sellToken}`);
+    sellTokens.add(token);
+    return buildCommitInteraction(silo, order);
+  });
 }
 
 export function toSolverJitOrder(silo: Address, order: SiloOrder): SolverJitOrder {

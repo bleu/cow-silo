@@ -44,7 +44,9 @@ contract SiloSettlementTest is Test {
         assertTrue(SETTLEMENT.authenticator().isSolver(SOLVER), "Fixture solver is not authorized");
         assertGe(USDC.balanceOf(USDC_HOLDER), 3 * SELL_AMOUNT, "Fixture holder needs USDC");
 
-        silo = new Silo(SETTLEMENT, CoWIERC20(address(WETH)), recipient, BUY_AMOUNT, APP_DATA, address(this));
+        silo = new Silo(
+            SETTLEMENT, CoWIERC20(address(WETH)), recipient, BUY_AMOUNT, BUY_AMOUNT, 0, APP_DATA, address(this)
+        );
         adapter = new ApprovalFundingAdapter(treasury, address(silo));
         silo.setFundingAdapter(adapter);
 
@@ -260,9 +262,7 @@ contract SiloSettlementTest is Test {
         IMainnetSettlement.Interaction[][3] memory interactions;
         interactions[0] = new IMainnetSettlement.Interaction[](1);
         interactions[0][0] = IMainnetSettlement.Interaction({
-            target: address(silo),
-            value: 0,
-            callData: abi.encodeCall(ISilo.commit, (order.hash(silo.domainSeparator()), USDC, order.sellAmount))
+            target: address(silo), value: 0, callData: abi.encodeCall(ISilo.commit, (order))
         });
         interactions[1] = new IMainnetSettlement.Interaction[](2);
         interactions[1][0] = IMainnetSettlement.Interaction({

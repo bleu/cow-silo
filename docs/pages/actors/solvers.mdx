@@ -1,59 +1,23 @@
 # Solvers
 
-## Why use Silo liquidity
+## Discover and quote inventory
 
-A Silo offers protocol-owned inventory. A solver can use this inventory to satisfy user demand in the same batch. The solver can also route the inventory through external liquidity.
+Index `SiloCreated` from the factory and `FundingAdapterSet` from each Silo. Read the resource token, recipient, app data, and effective `auctionDuration()` from the Silo. Identify the sell tokens your solver can price. The Silo has no token registration step or price oracle.
 
-Silo inventory has no onchain oracle price. Your solver must price the token and account for gas, transfer behavior, and execution risk.
+For each candidate sell token, read its Silo balance and `currentMinimumBuyAmount(sellToken)` at the same block. The required output applies to that token's full balance. `minimumBuyAmount()` is the floor and can be lower than the current requirement. A full sale of this token can raise its required output before your order executes. Sales of other tokens cannot.
 
-## Discovery
+If `fundingAdapter()` is zero, use the Silo balance as `sellAmount`. For `ApprovalFundingAdapter`, add `availableBalance(sellToken)`, the smaller of the source balance and its allowance to the adapter. Other adapters need their own estimate; `IFundingAdapter` defines only `fund(token)`.
 
-Index `SiloCreated`, `MinimumBuyAmountSet`, and `FundingAdapterSet` events. Store the immutable resource token, recipient, app data, Settlement address, and Vault Relayer. Read the current `minimumBuyAmount` and `fundingAdapter` before building an order. Read ERC-20 balances for tokens that your solver supports.
+## Build and settle an order
 
-## Build a solution
+Choose a buy amount at or above the current requirement. Build a fill-or-kill sell order with the [solver SDK](/developers/sdk). Use the chain's block timestamp to set a Silo execution deadline no more than 300 seconds ahead. Set the CoW order's `validTo` to that deadline **plus** the Silo's effective auction duration. Check that your driver accepts this wire lifetime before using it. The longer `validTo` preserves the fill record; it does not extend the Silo execution window.
 
-1. Read the current Silo balance and expected funding from the configured adapter. Set `sellAmount` to their sum.
-2. Read the current minimum buy amount and select an order limit at or above it.
-3. Build a fill-or-kill sell order with the SDK.
-4. Encode the ERC-1271 signature. The solver API signature starts with the 20-byte Silo address.
-5. Add one `Silo.commit` pre-interaction for each Silo order.
-6. Simulate the complete settlement, including commit and funding.
-7. Submit the JIT trade with `executedAmount` equal to the full sell amount.
+Use `toSolverJitOrder(silo, order)` for the solver API. Its ERC-1271 signature starts with the 20-byte Silo address. Add `buildCommitInteraction(silo, order)` as a Settlement pre-interaction. It encodes `Silo.commit(order)` with the same order that the trade uses. Submit the JIT trade with `executedAmount` equal to `sellAmount`. No post-interaction is needed to restart the clock.
 
-```ts
-import {
-  buildCommitInteraction,
-  buildOrder,
-  toSolverJitOrder,
-} from "@cow-silo/sdk";
+For several sell tokens in one Silo, use `buildCommitInteractions(silo, orders)`. Include at most one active order per Silo and sell token in the batch. A full fill restarts only that token's auction, even when another batch settles in the same block.
 
-const sellAmount = siloBalance + expectedAdapterFunding;
+## Simulate the full settlement
 
-const order = buildOrder({
-  sellToken,
-  resourceToken,
-  resourceRecipient,
-  sellAmount,
-  buyAmount: limitAmount,
-  minimumBuyAmount,
-  validTo: now + 300,
-  appData,
-});
+Include the funding and commit pre-interaction in simulation. Standalone `verify(order)` checks the balance already in the Silo and does not call the adapter. During `commit`, the Silo attempts funding with a 200,000 gas cap and ignores call failure. The resulting balance must equal `sellAmount` exactly. Changes to balances or allowances can invalidate the order.
 
-const jitOrder = toSolverJitOrder(silo, order);
-const preInteraction = buildCommitInteraction(silo, order, domainSeparator);
-```
-
-## Funding and simulation
-
-Use zero for `expectedAdapterFunding` when the adapter is disabled. For `ApprovalFundingAdapter`, read `availableBalance(sellToken)`: the smaller of the source balance and allowance to the adapter. `IFundingAdapter` defines only `fund(token)` and has no mandatory quote method. Other adapters need their own funding estimate. The solver supplies no funding amount or arbitrary bytes to the adapter.
-
-`commit` attempts funding after caller, token, and positive-amount checks. It then requires the actual combined Silo balance to equal the order's sell amount. Source inventory, allowance, or adapter configuration changes can make this check revert. An outer transaction revert rolls back source transfers. `verify` before funding still checks only the current Silo balance, so it can reject an order that includes expected funding. Simulate the full settlement with the commit pre-interaction.
-
-The adapter call has a fixed 200,000 gas cap. Failure and return data are ignored. Adapters that need more gas can fail. The cap does not guarantee success when the outer transaction has too little gas. A prefunded fallback works only when the actual Silo balance still equals `sellAmount`.
-
-A valid commit does not enforce a later trade or signature validation. An authorized Settlement interaction can fund and commit a matching balance without a sale. A successful transaction can therefore leave source inventory in the Silo. Do not treat commitment as proof of conversion. All order, minimum-buy, and ERC-1271 checks still apply when the order is validated.
-
-Use `buildCommitInteractions` when a settlement contains several Silo orders. Each order has an independent transient commitment.
-
-The SDK emits the current CoW solver JIT wire format. Your solver still controls the solution graph and interaction placement. An order can execute above its limit; all executed resource-token output goes to the configured recipient.
+A commit without a trade can leave source inventory in the Silo, but does not restart the auction. If the settlement reverts, source transfers also revert. Refresh the balance, required output, and deadline before retrying a stale order.

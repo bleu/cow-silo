@@ -31,12 +31,13 @@ contract SiloFactoryTest is Test {
         bytes32 appData = keccak256("appData");
         bytes32 userSalt = keccak256("userSalt");
         address predicted = factory.predictSiloAddress(
-            creator, IERC20(address(resource)), recipient, MINIMUM_BUY_AMOUNT, appData, userSalt
+            creator, IERC20(address(resource)), recipient, MINIMUM_BUY_AMOUNT, MINIMUM_BUY_AMOUNT, 0, appData, userSalt
         );
 
         vm.prank(creator);
-        ISilo deployedSilo =
-            factory.createSilo(IERC20(address(resource)), recipient, MINIMUM_BUY_AMOUNT, appData, userSalt);
+        ISilo deployedSilo = factory.createSilo(
+            IERC20(address(resource)), recipient, MINIMUM_BUY_AMOUNT, MINIMUM_BUY_AMOUNT, 0, appData, userSalt
+        );
         Silo silo = Silo(address(deployedSilo));
 
         assertEq(address(silo), predicted);
@@ -44,6 +45,46 @@ contract SiloFactoryTest is Test {
         assertEq(address(silo.resourceToken()), address(resource));
         assertEq(silo.resourceRecipient(), recipient);
         assertEq(silo.minimumBuyAmount(), MINIMUM_BUY_AMOUNT);
+    }
+
+    function testCreatesSiloWithAuctionCurve() public {
+        IERC20 token = IERC20(address(resource));
+        address recipient = makeAddr("recipient");
+        bytes32 appData = keccak256("appData");
+        bytes32 userSalt = keccak256("userSalt");
+        address predicted = factory.predictSiloAddress(
+            address(this), token, recipient, 20 ether, MINIMUM_BUY_AMOUNT, 300, appData, userSalt
+        );
+        vm.expectEmit(true, true, true, true, address(factory));
+        emit ISiloFactory.SiloCreated(
+            predicted, address(this), address(token), recipient, 20 ether, MINIMUM_BUY_AMOUNT, 300, appData, userSalt
+        );
+        ISilo silo = factory.createSilo(token, recipient, 20 ether, MINIMUM_BUY_AMOUNT, 300, appData, userSalt);
+        assertEq(address(silo), predicted);
+        assertEq(silo.initialBuyAmount(), 20 ether);
+        assertEq(silo.minimumBuyAmount(), MINIMUM_BUY_AMOUNT);
+        assertEq(silo.auctionDuration(), 300);
+    }
+
+    function testIgnoresAuctionDurationForFlatFloor() public {
+        IERC20 token = IERC20(address(resource));
+        address recipient = makeAddr("recipient");
+        bytes32 appData = keccak256("appData");
+        bytes32 userSalt = keccak256("userSalt");
+        address predicted =
+            factory.predictSiloAddress(address(this), token, recipient, 10 ether, 10 ether, 0, appData, userSalt);
+        assertEq(
+            factory.predictSiloAddress(address(this), token, recipient, 10 ether, 10 ether, 300, appData, userSalt),
+            predicted
+        );
+
+        vm.expectEmit(true, true, true, true, address(factory));
+        emit ISiloFactory.SiloCreated(
+            predicted, address(this), address(token), recipient, 10 ether, 10 ether, 0, appData, userSalt
+        );
+        ISilo silo = factory.createSilo(token, recipient, 10 ether, 10 ether, 300, appData, userSalt);
+        assertEq(address(silo), predicted);
+        assertEq(silo.auctionDuration(), 0);
     }
 
     function testSaltNamespacesCreators() public view {

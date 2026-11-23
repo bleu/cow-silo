@@ -3,7 +3,6 @@ pragma solidity 0.8.26;
 
 import { IERC1271 } from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
-import { IERC20 as OZIERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { Test } from "forge-std/Test.sol";
 import { IERC20 } from "cowprotocol/contracts/interfaces/IERC20.sol";
 import { GPv2Order } from "cowprotocol/contracts/libraries/GPv2Order.sol";
@@ -44,7 +43,9 @@ contract SiloTest is Test {
         resource = new MockERC20("Resource", "RSC");
         collected = new MockERC20("Collected", "FEE");
         collectedTwo = new MockERC20("Collected Two", "FEE2");
-        silo = new Silo(settlement, IERC20(address(resource)), recipient, MINIMUM_BUY_AMOUNT, APP_DATA, owner);
+        silo = new Silo(
+            settlement, IERC20(address(resource)), recipient, MINIMUM_BUY_AMOUNT, MINIMUM_BUY_AMOUNT, 0, APP_DATA, owner
+        );
         vm.warp(1_800_000_000);
     }
 
@@ -87,9 +88,7 @@ contract SiloTest is Test {
         silo.setFundingAdapter(adapter);
         GPv2Order.Data memory order = validOrder(100, 20);
 
-        (bool observedCommitment, bytes4 result) = settlement.commitAndValidate(
-            silo, order.hash(DOMAIN_SEPARATOR), OZIERC20(address(collected)), 100, abi.encode(order)
-        );
+        (bool observedCommitment, bytes4 result) = settlement.commitAndValidate(silo, order);
 
         assertTrue(observedCommitment);
         assertEq(result, IERC1271.isValidSignature.selector);
@@ -109,9 +108,7 @@ contract SiloTest is Test {
         silo.setFundingAdapter(adapter);
         GPv2Order.Data memory order = validOrder(100, 20);
 
-        (, bytes4 result) = settlement.commitAndValidate(
-            silo, order.hash(DOMAIN_SEPARATOR), OZIERC20(address(collected)), 100, abi.encode(order)
-        );
+        (, bytes4 result) = settlement.commitAndValidate(silo, order);
 
         assertEq(result, IERC1271.isValidSignature.selector);
         assertEq(collected.balanceOf(address(silo)), 100);
@@ -125,9 +122,7 @@ contract SiloTest is Test {
         collected.mint(address(silo), 100);
         GPv2Order.Data memory order = validOrder(100, 20);
 
-        (, bytes4 result) = settlement.commitAndValidate(
-            silo, order.hash(DOMAIN_SEPARATOR), OZIERC20(address(collected)), 100, abi.encode(order)
-        );
+        (, bytes4 result) = settlement.commitAndValidate(silo, order);
 
         assertEq(result, IERC1271.isValidSignature.selector);
     }
@@ -139,9 +134,7 @@ contract SiloTest is Test {
         collected.mint(address(silo), 100);
         GPv2Order.Data memory order = validOrder(100, 20);
 
-        (, bytes4 result) = settlement.commitAndValidate{ gas: 500_000 }(
-            silo, order.hash(DOMAIN_SEPARATOR), OZIERC20(address(collected)), 100, abi.encode(order)
-        );
+        (, bytes4 result) = settlement.commitAndValidate{ gas: 500_000 }(silo, order);
 
         assertEq(result, IERC1271.isValidSignature.selector);
     }
@@ -153,9 +146,7 @@ contract SiloTest is Test {
         collected.mint(address(silo), 100);
         GPv2Order.Data memory order = validOrder(100, 20);
 
-        (, bytes4 result) = settlement.commitAndValidate{ gas: 350_000 }(
-            silo, order.hash(DOMAIN_SEPARATOR), OZIERC20(address(collected)), 100, abi.encode(order)
-        );
+        (, bytes4 result) = settlement.commitAndValidate{ gas: 350_000 }(silo, order);
 
         assertEq(result, IERC1271.isValidSignature.selector);
     }
@@ -167,9 +158,7 @@ contract SiloTest is Test {
         collected.mint(address(silo), 100);
         GPv2Order.Data memory order = validOrder(100, 20);
 
-        (, bytes4 result) = settlement.commitAndValidate{ gas: 350_000 }(
-            silo, order.hash(DOMAIN_SEPARATOR), OZIERC20(address(collected)), 100, abi.encode(order)
-        );
+        (, bytes4 result) = settlement.commitAndValidate{ gas: 350_000 }(silo, order);
 
         assertEq(result, IERC1271.isValidSignature.selector);
     }
@@ -187,7 +176,7 @@ contract SiloTest is Test {
         bytes32 digest = order.hash(DOMAIN_SEPARATOR);
 
         vm.expectRevert(abi.encodeWithSelector(ISilo.BalanceChanged.selector, 99, 100));
-        settlement.commitAndValidate(silo, digest, OZIERC20(address(collected)), 99, abi.encode(order));
+        settlement.commitAndValidate(silo, order);
 
         assertEq(collected.balanceOf(source), 60);
         assertEq(collected.balanceOf(address(silo)), 40);
@@ -210,7 +199,7 @@ contract SiloTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(ISilo.BuyAmountBelowMinimum.selector, MINIMUM_BUY_AMOUNT - 1, MINIMUM_BUY_AMOUNT)
         );
-        settlement.commitAndValidate(silo, digest, OZIERC20(address(collected)), 100, abi.encode(order));
+        settlement.commitAndValidate(silo, order);
 
         assertEq(collected.balanceOf(source), 100);
         assertEq(collected.balanceOf(address(silo)), 0);
@@ -236,9 +225,7 @@ contract SiloTest is Test {
         vm.stopPrank();
         GPv2Order.Data memory order = validOrder(80, 20);
 
-        (, bytes4 result) = settlement.commitAndValidate(
-            silo, order.hash(DOMAIN_SEPARATOR), OZIERC20(address(collected)), 80, abi.encode(order)
-        );
+        (, bytes4 result) = settlement.commitAndValidate(silo, order);
 
         assertEq(result, IERC1271.isValidSignature.selector);
         assertEq(collected.balanceOf(oldSource), 60);
@@ -259,9 +246,7 @@ contract SiloTest is Test {
         vm.stopPrank();
         GPv2Order.Data memory order = validOrder(40, 20);
 
-        (, bytes4 result) = settlement.commitAndValidate(
-            silo, order.hash(DOMAIN_SEPARATOR), OZIERC20(address(collected)), 40, abi.encode(order)
-        );
+        (, bytes4 result) = settlement.commitAndValidate(silo, order);
 
         assertEq(result, IERC1271.isValidSignature.selector);
         assertEq(collected.balanceOf(source), 60);
@@ -280,9 +265,7 @@ contract SiloTest is Test {
         silo.setFundingAdapter(adapter);
         GPv2Order.Data memory order = validOrder(40, 20);
 
-        (, bytes4 result) = settlement.commitAndValidate(
-            silo, order.hash(DOMAIN_SEPARATOR), OZIERC20(address(collected)), 40, abi.encode(order)
-        );
+        (, bytes4 result) = settlement.commitAndValidate(silo, order);
 
         assertEq(result, IERC1271.isValidSignature.selector);
         assertEq(collected.balanceOf(source), 60);
@@ -299,7 +282,7 @@ contract SiloTest is Test {
         bytes32 digest = order.hash(DOMAIN_SEPARATOR);
 
         vm.expectRevert(abi.encodeWithSelector(ISilo.BalanceChanged.selector, 100, 40));
-        settlement.commitAndValidate(silo, digest, OZIERC20(address(collected)), 100, abi.encode(order));
+        settlement.commitAndValidate(silo, order);
 
         assertFalse(silo.isCommitted(digest));
     }
@@ -317,9 +300,7 @@ contract SiloTest is Test {
         uint256 amount = uint256(existing) + approved;
         GPv2Order.Data memory order = validOrder(amount, 20);
 
-        (, bytes4 result) = settlement.commitAndValidate(
-            silo, order.hash(DOMAIN_SEPARATOR), OZIERC20(address(collected)), amount, abi.encode(order)
-        );
+        (, bytes4 result) = settlement.commitAndValidate(silo, order);
 
         assertEq(result, IERC1271.isValidSignature.selector);
         assertEq(collected.balanceOf(address(silo)), amount);
@@ -336,9 +317,7 @@ contract SiloTest is Test {
         silo.setFundingAdapter(adapter);
         GPv2Order.Data memory order = validOrder(40, 20);
 
-        (, bytes4 result) = settlement.commitAndValidate(
-            silo, order.hash(DOMAIN_SEPARATOR), OZIERC20(address(collected)), 40, abi.encode(order)
-        );
+        (, bytes4 result) = settlement.commitAndValidate(silo, order);
 
         assertEq(result, IERC1271.isValidSignature.selector);
         assertEq(collected.balanceOf(source), 60);
@@ -349,14 +328,19 @@ contract SiloTest is Test {
         uint256 amount = 100 ether;
         collected.mint(address(silo), amount);
         GPv2Order.Data memory order = validOrder(amount, 9 ether);
-        bytes32 digest = order.hash(DOMAIN_SEPARATOR);
 
-        (bool observedCommitment, bytes4 result) =
-            settlement.commitAndValidate(silo, digest, OZIERC20(address(collected)), amount, abi.encode(order));
+        (bool observedCommitment, bytes4 result) = settlement.commitAndValidate(silo, order);
 
         assertTrue(observedCommitment);
         assertEq(collected.allowance(address(silo), vaultRelayer), type(uint256).max);
         assertEq(result, IERC1271.isValidSignature.selector);
+    }
+
+    function testSecondCommitForSameTokenSupersedesFirst() public {
+        collected.mint(address(silo), 100);
+        GPv2Order.Data[2] memory orders = [validOrder(100, 20), validOrder(100, 21)];
+        vm.expectRevert(ISilo.InvalidCommitment.selector);
+        settlement.commitAndValidateTwo(silo, orders);
     }
 
     function testCommitmentStartsEmpty() public view {
@@ -371,13 +355,9 @@ contract SiloTest is Test {
 
         GPv2Order.Data memory orderOne = validOrder(address(collected), amountOne, 9 ether);
         GPv2Order.Data memory orderTwo = validOrder(address(collectedTwo), amountTwo, 12 ether);
-        bytes32[2] memory digests = [orderOne.hash(DOMAIN_SEPARATOR), orderTwo.hash(DOMAIN_SEPARATOR)];
-        OZIERC20[2] memory sellTokens = [OZIERC20(address(collected)), OZIERC20(address(collectedTwo))];
-        uint256[2] memory sellAmounts = [amountOne, amountTwo];
-        bytes[2] memory signatures = [abi.encode(orderOne), abi.encode(orderTwo)];
 
         (bool[2] memory observedCommitments, bytes4[2] memory results) =
-            settlement.commitAndValidateTwo(silo, digests, sellTokens, sellAmounts, signatures);
+            settlement.commitAndValidateTwo(silo, [orderOne, orderTwo]);
 
         assertTrue(observedCommitments[0]);
         assertTrue(observedCommitments[1]);
@@ -390,24 +370,24 @@ contract SiloTest is Test {
     function testCommitRevertsOutsideSettlement() public {
         collected.mint(address(silo), 1);
         vm.expectRevert(ISilo.CommitOutsideSettlement.selector);
-        silo.commit(bytes32(uint256(1)), OZIERC20(address(collected)), 1);
+        silo.commit(validOrder(1, MINIMUM_BUY_AMOUNT));
     }
 
     function testCommitRevertsWhenBalanceChanged() public {
         collected.mint(address(silo), 10);
         vm.prank(address(settlement));
         vm.expectRevert(abi.encodeWithSelector(ISilo.BalanceChanged.selector, 11, 10));
-        silo.commit(bytes32(uint256(1)), OZIERC20(address(collected)), 11);
+        silo.commit(validOrder(11, MINIMUM_BUY_AMOUNT));
     }
 
     function testCommitRejectsInvalidSellToken() public {
         vm.startPrank(address(settlement));
 
         vm.expectRevert(ISilo.InvalidSellToken.selector);
-        silo.commit(bytes32(uint256(1)), OZIERC20(address(0)), 1);
+        silo.commit(validOrder(address(0), 1, MINIMUM_BUY_AMOUNT));
 
         vm.expectRevert(ISilo.InvalidSellToken.selector);
-        silo.commit(bytes32(uint256(1)), OZIERC20(address(resource)), 1);
+        silo.commit(validOrder(address(resource), 1, MINIMUM_BUY_AMOUNT));
 
         vm.stopPrank();
     }
@@ -415,7 +395,7 @@ contract SiloTest is Test {
     function testCommitRejectsZeroSellAmount() public {
         vm.prank(address(settlement));
         vm.expectRevert(ISilo.EmptyBalance.selector);
-        silo.commit(bytes32(uint256(1)), OZIERC20(address(collected)), 0);
+        silo.commit(validOrder(0, MINIMUM_BUY_AMOUNT));
     }
 
     function testSignatureRevertsWithoutCommitment() public {
@@ -429,12 +409,14 @@ contract SiloTest is Test {
     function testSignatureRejectsOrderThatDoesNotMatchCommittedHash() public {
         collected.mint(address(silo), 100);
         GPv2Order.Data memory order = validOrder(100, 20);
-        bytes32 differentDigest = keccak256("different order");
+        bytes32 digest = order.hash(DOMAIN_SEPARATOR);
+        vm.startPrank(address(settlement));
+        silo.commit(order);
 
+        order.buyAmount += 1;
         vm.expectRevert(ISilo.InvalidOrderHash.selector);
-        settlement.commitAndValidate(
-            silo, differentDigest, OZIERC20(address(collected)), order.sellAmount, abi.encode(order)
-        );
+        silo.isValidSignature(digest, abi.encode(order));
+        vm.stopPrank();
     }
 
     function testVerifyRequiresFullBalance() public {
@@ -548,29 +530,6 @@ contract SiloTest is Test {
         silo.verify(order);
     }
 
-    function testOwnerCanSetMinimumBuyAmount() public {
-        uint256 newMinimum = 25 ether;
-
-        vm.expectEmit(false, false, false, true, address(silo));
-        emit ISilo.MinimumBuyAmountSet(MINIMUM_BUY_AMOUNT, newMinimum);
-        vm.prank(owner);
-        silo.setMinimumBuyAmount(newMinimum);
-
-        assertEq(silo.minimumBuyAmount(), newMinimum);
-    }
-
-    function testUpdatedMinimumAppliesToExistingInventory() public {
-        uint256 newMinimum = 25 ether;
-        collected.mint(address(silo), 100 ether);
-
-        vm.prank(owner);
-        silo.setMinimumBuyAmount(newMinimum);
-
-        GPv2Order.Data memory order = validOrder(100 ether, newMinimum - 1);
-        vm.expectRevert(abi.encodeWithSelector(ISilo.BuyAmountBelowMinimum.selector, newMinimum - 1, newMinimum));
-        silo.verify(order);
-    }
-
     function testOwnershipTransferRequiresAcceptance() public {
         address nextOwner = makeAddr("nextOwner");
 
@@ -587,44 +546,95 @@ contract SiloTest is Test {
         assertEq(silo.pendingOwner(), address(0));
     }
 
-    function testSetMinimumBuyAmountRejectsUnauthorizedCaller() public {
-        address caller = makeAddr("caller");
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, caller));
-        vm.prank(caller);
-        silo.setMinimumBuyAmount(25 ether);
+    function testFirstCurveStartsAtDeploymentWithoutInventory() public {
+        Silo auction =
+            new Silo(settlement, IERC20(address(resource)), recipient, type(uint256).max, 1, 4, APP_DATA, owner);
+        IERC20 token = IERC20(address(collected));
+        uint256 start = block.timestamp;
+        assertEq(auction.currentMinimumBuyAmount(token), type(uint256).max);
+        vm.warp(start + 2);
+        assertEq(auction.currentMinimumBuyAmount(token), uint256(1) << 255);
+        vm.warp(start + 4);
+        assertEq(auction.currentMinimumBuyAmount(token), 1);
     }
 
-    function testSetMinimumBuyAmountRejectsZero() public {
-        vm.expectRevert(ISilo.InvalidMinimumBuyAmount.selector);
-        vm.prank(owner);
-        silo.setMinimumBuyAmount(0);
+    function testCannotDeployCurveWithoutRepresentableWireDeadline() public {
+        vm.warp(type(uint32).max - 1 hours);
+        vm.expectRevert(ISilo.InvalidAuction.selector);
+        new Silo(settlement, IERC20(address(resource)), recipient, 20, 10, 2 hours, APP_DATA, owner);
+    }
+
+    function testDescendingCurveRequiresTimeToReachFloor() public {
+        vm.expectRevert(ISilo.InvalidAuction.selector);
+        new Silo(settlement, IERC20(address(resource)), recipient, 11, 10, 0, APP_DATA, owner);
+    }
+
+    function testConstructorRejectsStartBelowFloor() public {
+        vm.expectRevert(ISilo.InvalidAuction.selector);
+        new Silo(settlement, IERC20(address(resource)), recipient, 9, 10, 1 hours, APP_DATA, owner);
     }
 
     function testConstructorRejectsZeroMinimumBuyAmount() public {
         vm.expectRevert(ISilo.InvalidMinimumBuyAmount.selector);
-        new Silo(settlement, IERC20(address(resource)), recipient, 0, APP_DATA, owner);
+        new Silo(settlement, IERC20(address(resource)), recipient, 0, 0, 0, APP_DATA, owner);
     }
 
     function testConstructorRejectsZeroAddresses() public {
         vm.expectRevert(ISilo.ZeroAddress.selector);
-        new Silo(ISettlement(address(0)), IERC20(address(resource)), recipient, MINIMUM_BUY_AMOUNT, APP_DATA, owner);
+        new Silo(
+            ISettlement(address(0)),
+            IERC20(address(resource)),
+            recipient,
+            MINIMUM_BUY_AMOUNT,
+            MINIMUM_BUY_AMOUNT,
+            0,
+            APP_DATA,
+            owner
+        );
 
         vm.expectRevert(ISilo.ZeroAddress.selector);
-        new Silo(settlement, IERC20(address(0)), recipient, MINIMUM_BUY_AMOUNT, APP_DATA, owner);
+        new Silo(settlement, IERC20(address(0)), recipient, MINIMUM_BUY_AMOUNT, MINIMUM_BUY_AMOUNT, 0, APP_DATA, owner);
 
         vm.expectRevert(ISilo.ZeroAddress.selector);
-        new Silo(settlement, IERC20(address(resource)), address(0), MINIMUM_BUY_AMOUNT, APP_DATA, owner);
+        new Silo(
+            settlement,
+            IERC20(address(resource)),
+            address(0),
+            MINIMUM_BUY_AMOUNT,
+            MINIMUM_BUY_AMOUNT,
+            0,
+            APP_DATA,
+            owner
+        );
     }
 
     function testConstructorRejectsZeroVaultRelayer() public {
         MockSettlement invalidSettlement = new MockSettlement(DOMAIN_SEPARATOR, address(0));
         vm.expectRevert(ISilo.ZeroAddress.selector);
-        new Silo(invalidSettlement, IERC20(address(resource)), recipient, MINIMUM_BUY_AMOUNT, APP_DATA, owner);
+        new Silo(
+            invalidSettlement,
+            IERC20(address(resource)),
+            recipient,
+            MINIMUM_BUY_AMOUNT,
+            MINIMUM_BUY_AMOUNT,
+            0,
+            APP_DATA,
+            owner
+        );
     }
 
     function testConstructorRejectsZeroOwner() public {
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableInvalidOwner.selector, address(0)));
-        new Silo(settlement, IERC20(address(resource)), recipient, MINIMUM_BUY_AMOUNT, APP_DATA, address(0));
+        new Silo(
+            settlement,
+            IERC20(address(resource)),
+            recipient,
+            MINIMUM_BUY_AMOUNT,
+            MINIMUM_BUY_AMOUNT,
+            0,
+            APP_DATA,
+            address(0)
+        );
     }
 
     function testFuzzVerifyAcceptsCanonicalOrder(uint128 sellAmount, uint128 buyAmount, uint16 validFor) public {

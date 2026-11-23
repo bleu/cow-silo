@@ -1,52 +1,38 @@
 # Security model
 
-## Enforced onchain
+## Order checks
 
-The Silo enforces these rules:
+The sell token must be non-zero and different from the resource token. A fill-or-kill sell order must sell the full, positive token balance after any funding. The buy token, receiver, and app data must match the Silo's configuration. Both balance types must be ERC-20, and the fee must be zero.
 
-- The sell token is not the resource token.
-- The buy token is the resource token.
-- The receiver is the fixed resource recipient.
-- The sell amount equals the complete current balance.
-- The buy amount meets the current resource-denominated minimum.
-- The order expires in five minutes or less.
-- The app data matches the fixed app data.
-- The fee is zero.
-- The order is a fill-or-kill sell order.
-- Both balance types are ERC-20.
-- The Settlement contract committed each exact order hash in the same transaction.
+The order's `buyAmount` must meet `currentMinimumBuyAmount(sellToken)` at validation. The auction sets an absolute output amount for the full balance. The Silo has no price oracle. Deposits can change the amount sold without changing the required output. An order can execute at its limit.
 
-Each order uses a separate transient-storage commitment. Committing a second order does not invalidate the first order.
+Only the configured Settlement contract can call `Silo.commit(order)`. ERC-1271 validation requires a matching order hash and a commitment in the same transaction. Each Silo allows one active order per sell token in a batch. A later commit for the same token replaces the earlier commitment. Orders for other tokens remain active. A commit alone does not reset the auction. The Silo uses Settlement's full-fill record to confirm a sale of that token. A new sale can change a solver's quote before settlement.
+
+## Execution deadline and fill records
+
+The Silo derives `executionDeadline = validTo - auctionDuration()`. At commit and validation, the deadline must be between the current block timestamp and 300 seconds later, inclusive. CoW's `validTo` can be later than this deadline. This keeps the fill record available until the sold token reaches its floor, even if the order executes at the deadline. For a flat auction, `auctionDuration()` is zero and the two deadlines are equal.
+
+Verify that the intended driver accepts the chosen CoW order lifetime. An onchain deadline check does not establish driver support.
 
 ## Administrative control
 
-The Silo uses two-step ownership. The owner can change `minimumBuyAmount` and replace or disable `fundingAdapter`. A zero minimum is not valid. The owner cannot change the resource token, recipient, Settlement contract, Vault Relayer, or app data. The owner cannot withdraw fee tokens.
-
-Renouncing ownership permanently freezes the current minimum and adapter configuration. A production protocol should use its standard governance controls as the owner.
+The initial amount, positive floor, and effective duration are immutable. The owner cannot withdraw fee tokens or change the resource token, recipient, Settlement contract, Vault Relayer, or app data. The owner can replace or disable the funding adapter and transfer ownership in two steps. Renouncing ownership freezes the adapter configuration.
 
 ## Optional funding
 
-Funding starts disabled. After caller, token, and positive-amount checks, `commit` attempts `fund(sellToken)` on a non-zero adapter with a fixed 200,000 gas cap. It ignores failure and return data. An expensive adapter can fail within this cap. The cap does not guarantee success when the outer transaction has too little gas. If funding fails, the current Silo balance must still exactly match `sellAmount`; prefunding alone does not make an order for a larger amount valid.
+Funding starts disabled. A configured adapter gets at most 200,000 gas per `fund(sellToken)` call. The Silo ignores failure and return data. If the adapter fails, the Silo balance must still match `sellAmount`. The gas cap does not guarantee success if the outer transaction has too little gas.
 
-`ApprovalFundingAdapter` fixes a non-zero source and Silo recipient. Only the Silo can call `fund`. The source approves the adapter as the actual spender, not the Silo or Vault Relayer. The adapter can transfer only the smaller of the source balance and its allowance. Replacing or disabling the adapter does not revoke the source's token allowances. Revoke old adapter allowances separately.
+`ApprovalFundingAdapter` fixes a non-zero source and Silo recipient. Only that Silo can call `fund`. The source approves the adapter as the spender. The adapter can transfer up to the smaller of the source balance and its allowance. Replacing or disabling the adapter does not revoke the source's token allowances. Revoke old allowances separately.
 
-Source approval permits inventory to move into the Silo on a valid `commit`. A commitment does not require a later trade or signature validation. An authorized Settlement interaction can commit a matching funded balance without selling it, leaving source tokens in the Silo. The fixed recipient prevents diversion to another address; it does not guarantee that source inventory stays at the source until a completed conversion.
+A commit can move source inventory to the Silo without a trade. If the outer transaction reverts, the transfer rolls back. If it succeeds without a fill, the tokens stay in the Silo and the clock does not restart. Changes to source balances, allowances, or adapter configuration can invalidate the solver's funding estimate.
 
-Changes to source inventory, allowances, or adapter configuration can make the exact-balance check revert. If the outer transaction reverts, the source transfer also rolls back. A successful commit without a trade does not roll back funding.
+Adapters have no special withdrawal rights. Review the adapter and its source permissions before granting access.
 
-Adapters have no privileged withdrawal bypass. A protocol-specific adapter must use the source protocol's existing permissions. Review those permissions and adapter behavior before granting access.
+## External controls and token behavior
 
-## Required external controls
+CoW Protocol controls solver authorization and the surplus-capturing JIT owner set. Check the intended CoW configuration before relying on either.
 
-CoW Protocol authorizes solvers. CoW Protocol also controls the surplus-capturing JIT owner set. This set must include the production Silo deployment model.
-
-The Silo has no price oracle. The minimum buy amount is an absolute output floor, not a price assertion. Solver competition supplies price discovery above that floor. If competition fails, an order can execute at its limit. Protocols must treat the selected minimum, CoW configuration, and solver diversity as security dependencies.
-
-## Token behavior
-
-The first settlement for a token gives the Vault Relayer an unlimited allowance. The configured CoW Settlement contract is the only caller of the Vault Relayer.
-
-Rebasing tokens, fee-on-transfer tokens, callback tokens, and tokens with unusual approval rules need separate tests. The current version targets standard ERC-20 tokens.
+If the Vault Relayer allowance is too small, `commit` gives it an unlimited allowance for that sell token. Only the configured CoW Settlement contract can call the Vault Relayer. The Silo targets standard ERC-20 tokens. Rebasing, transfer fees, callbacks, and unusual approval rules need separate tests.
 
 ## Status
 
