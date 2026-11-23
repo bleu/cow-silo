@@ -3,11 +3,21 @@ import {
   encodeAbiParameters,
   encodeFunctionData,
   keccak256,
-  parseAbi,
   parseAbiParameters,
   type Address,
   type Hex,
 } from "viem";
+import { siloAbi } from "./abi.js";
+import type { OrderTerms } from "./reader.js";
+
+export { approvalFundingAdapterAbi, siloAbi } from "./abi.js";
+export {
+  readOrderTerms,
+  readOrderTermsBatch,
+  type OrderTerms,
+  type OrderTermsResult,
+  type SiloPair,
+} from "./reader.js";
 
 export type SiloOrder = {
   sellToken: Address;
@@ -61,25 +71,30 @@ const orderHashParameters = parseAbiParameters(
   "bytes32 typeHash, address sellToken, address buyToken, address receiver, uint256 sellAmount, uint256 buyAmount, uint32 validTo, bytes32 appData, uint256 feeAmount, bytes32 kind, bool partiallyFillable, bytes32 sellTokenBalance, bytes32 buyTokenBalance",
 );
 
-export const siloAbi = parseAbi([
-  "function commit(bytes32 orderHash, address sellToken, uint256 sellAmount)",
-  "function domainSeparator() view returns (bytes32)",
-  "function resourceToken() view returns (address)",
-  "function resourceRecipient() view returns (address)",
-  "function minimumBuyAmount() view returns (uint256)",
-  "function fundingAdapter() view returns (address)",
-  "function setFundingAdapter(address newAdapter)",
-  "function FUNDING_GAS_LIMIT() view returns (uint256)",
-  "function appData() view returns (bytes32)",
-  "function isCommitted(bytes32 orderHash) view returns (bool)",
-]);
+export function buildJitTrade(terms: OrderTerms, limit: { buyAmount: bigint; validTo: number }) {
+  const { validTo } = limit;
+  if (
+    !Number.isInteger(validTo) || validTo < 0 || validTo > 0xffffffff ||
+    validTo < terms.blockTimestamp || validTo > terms.blockTimestamp + 300n
+  ) {
+    throw new Error("validTo must be within five minutes of the observed block");
+  }
 
-export const approvalFundingAdapterAbi = parseAbi([
-  "function source() view returns (address)",
-  "function silo() view returns (address)",
-  "function availableBalance(address sellToken) view returns (uint256)",
-  "function fund(address sellToken)",
-]);
+  const order = buildOrder({
+    sellToken: terms.sellToken,
+    resourceToken: terms.buyToken,
+    resourceRecipient: terms.receiver,
+    sellAmount: terms.sellAmount,
+    minimumBuyAmount: terms.minimumBuyAmount,
+    appData: terms.appData,
+    ...limit,
+  });
+  return {
+    jitOrder: toSolverJitOrder(terms.silo, order),
+    executedAmount: order.sellAmount.toString(),
+    preInteraction: buildCommitInteraction(terms.silo, order, terms.domainSeparator),
+  };
+}
 
 export function buildOrder(input: {
   sellToken: Address;
