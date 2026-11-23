@@ -1,20 +1,47 @@
 # Solver SDK
 
-The TypeScript package is `@cow-silo/sdk`.
+`@cow-silo/sdk` reads onchain order terms and builds CoW solver JIT trades. You supply the Silo and sell token addresses. The SDK has no hosted server, price feed, or automatic token discovery. For a bounded log query that uses the `OrderCommitted` event in the exported `siloAbi`, see [Solvers](/actors/solvers).
 
-It provides these functions:
+## Read order terms
+
+`readOrderTerms(client, { silo, sellToken, blockNumber? })` returns `OrderTerms` for the full sell balance, or `null` if the Silo has nothing it can sell for that pair. It throws if a read fails. It only reads tokens held by the Silo; it does not include uncollected protocol fees.
+
+`readOrderTermsBatch(client, { pairs, blockNumber? })` takes an array of `{ silo, sellToken }` pairs. It returns one result per pair, in request order:
+
+| Result | Meaning |
+| --- | --- |
+| `{ status: "available", terms }` | The pair has order terms at the selected block. |
+| `{ status: "empty" }` | The sell balance was zero, or the sell token was the Silo's resource token. |
+| `{ status: "error", error }` | The pair could not be read. `error` is an `Error`. |
+
+Both readers use the latest block if you omit `blockNumber`. A shared RPC error, such as a failed block lookup, can cause the whole batch to throw. Use a viem public client on the Silo's chain with Multicall3 configured at `chain.contracts.multicall3`. The RPC must support contract reads at the selected block, and Multicall3 must exist at that block. For older blocks, use an RPC that retains the required historical state. The solver log example also requires `eth_getLogs` for the requested block range.
+
+Each `OrderTerms` snapshot contains:
+
+| Fields | Values |
+| --- | --- |
+| `silo`, `sellToken`, `buyToken`, `receiver` | Addresses. `buyToken` is the resource token and `receiver` is its configured recipient. |
+| `sellAmount`, `minimumBuyAmount` | Full sell balance and output floor, both `bigint` values in the respective token's smallest unit. |
+| `appData`, `domainSeparator` | Silo app data and the Settlement domain separator. |
+| `blockNumber`, `blockTimestamp` | Snapshot block number and Unix time in seconds, both `bigint` values. |
+
+## Build a JIT trade
+
+`buildJitTrade(terms, { buyAmount, validTo })` uses your quoted `buyAmount` (`bigint`) as the order limit. It must be at least `terms.minimumBuyAmount`. Pass `validTo` as a `number` in Unix seconds. At execution, it must be between the block timestamp and five minutes after that timestamp.
+
+The result contains `jitOrder` with the Silo-prefixed ERC-1271 signature, `executedAmount` as the full sell amount in decimal string form, and `preInteraction` for `Silo.commit`. Your solver assembles and simulates the settlement.
+
+## Lower-level functions
 
 | Function | Result |
 | --- | --- |
-| `buildOrder` | Canonical Silo order data. |
+| `buildOrder` | Canonical Silo order data. Requires the current `minimumBuyAmount` and rejects a lower limit. |
 | `encodeOrderPayload` | Raw ERC-1271 payload for `Silo.isValidSignature`. |
 | `encodeSolverSignature` | CoW solver API signature with the Silo owner prefix. |
 | `hashOrder` | CoW EIP-712 order digest from a Settlement domain separator. |
 | `buildCommitInteraction` | Pre-interaction for `Silo.commit`. |
 | `buildCommitInteractions` | Pre-interactions for several independent Silo orders. |
-| `toSolverJitOrder` | Current CoW solver API JIT order object. |
-
-The package uses `bigint` for token amounts. `buildOrder` requires the current `minimumBuyAmount` and rejects a lower limit. It remains a pure builder: it uses the supplied `sellAmount` and does not fetch balances, configuration, or prices. The solver controls those data sources.
+| `toSolverJitOrder` | CoW solver API JIT order object. |
 
 ## Funding adapter ABI
 

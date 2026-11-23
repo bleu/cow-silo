@@ -1,52 +1,62 @@
 # Solvers
 
-## Why use Silo liquidity
+A solver can use Silo inventory to fill user orders in a CoW batch or route it through external liquidity. The Silo sets a minimum buy amount in the resource token. Your solver must price the full sell balance and account for gas and token transfer behavior.
 
-A Silo offers protocol-owned inventory. A solver can use this inventory to satisfy user demand in the same batch. The solver can also route the inventory through external liquidity.
+## Find candidate sell tokens
 
-Silo inventory has no onchain oracle price. Your solver must price the token and account for gas, transfer behavior, and execution risk.
+Find Silo addresses in the `SiloCreated` logs of a factory you trust, or use a configured address. Each Silo's `OrderCommitted` logs identify tokens from past commitments. A log does not tell you the current balance, and a newly deposited token might have no log. Add seed token addresses from your own list to cover those deposits.
 
-## Discovery
-
-Index `SiloCreated`, `MinimumBuyAmountSet`, and `FundingAdapterSet` events. Store the immutable resource token, recipient, app data, Settlement address, and Vault Relayer. Read the current `minimumBuyAmount` and `fundingAdapter` before building an order. Read ERC-20 balances for tokens that your solver supports.
-
-## Build a solution
-
-1. Read the current Silo balance and expected funding from the configured adapter. Set `sellAmount` to their sum.
-2. Read the current minimum buy amount and select an order limit at or above it.
-3. Build a fill-or-kill sell order with the SDK.
-4. Encode the ERC-1271 signature. The solver API signature starts with the 20-byte Silo address.
-5. Add one `Silo.commit` pre-interaction for each Silo order.
-6. Simulate the complete settlement, including commit and funding.
-7. Submit the JIT trade with `executedAmount` equal to the full sell amount.
+This example uses a viem public `client` and a known `silo` with funding disabled. Check `fundingAdapter()` at the selected block before using a balance-only quote. If an adapter is configured, see [Funding and simulation](#funding-and-simulation). Set `seedTokens` to an empty array if you have no seeds. Adjust the log window to fit your RPC provider's limit. Keep the tokens you find in your watchlist so a pair stays on the list after its last commitment leaves the window.
 
 ```ts
-import {
-  buildCommitInteraction,
-  buildOrder,
-  toSolverJitOrder,
-} from "@cow-silo/sdk";
+import { getAddress } from "viem";
+import { buildJitTrade, readOrderTermsBatch, siloAbi } from "@cow-silo/sdk";
 
-const sellAmount = siloBalance + expectedAdapterFunding;
-
-const order = buildOrder({
-  sellToken,
-  resourceToken,
-  resourceRecipient,
-  sellAmount,
-  buyAmount: limitAmount,
-  minimumBuyAmount,
-  validTo: now + 300,
-  appData,
+const blockNumber = await client.getBlockNumber();
+const logs = await client.getContractEvents({
+  address: silo,
+  abi: siloAbi,
+  eventName: "OrderCommitted",
+  fromBlock: blockNumber >= 999n ? blockNumber - 999n : 0n,
+  toBlock: blockNumber,
+  strict: true,
 });
-
-const jitOrder = toSolverJitOrder(silo, order);
-const preInteraction = buildCommitInteraction(silo, order, domainSeparator);
+const candidates = [...seedTokens, ...logs.map(log => log.args.sellToken)];
+const tokens = new Set(candidates.map(token => getAddress(token)));
+const pairs = Array.from(tokens, sellToken => ({ silo, sellToken }));
+const results = await readOrderTermsBatch(client, { pairs, blockNumber });
 ```
+
+## Quote, build, and simulate
+
+Quote each available pair for its full `sellAmount`. Skip it if the route cannot deliver `minimumBuyAmount` to the recipient. In this example, `solver.quoteBuyAmount`, `solver.buildSettlement`, and `solver.simulate` are functions you supply. The quote returns a `bigint` in buy-token units, or `null` if there is no route.
+
+```ts
+for (const [i, result] of results.entries()) {
+  if (result.status === "error") {
+    console.warn(pairs[i], result.error);
+    continue;
+  }
+  if (result.status === "empty") continue;
+
+  const { terms } = result;
+  const buyAmount = await solver.quoteBuyAmount(terms);
+  if (buyAmount === null || buyAmount < terms.minimumBuyAmount) continue;
+
+  const trade = buildJitTrade(terms, {
+    buyAmount,
+    validTo: Number(terms.blockTimestamp + 300n),
+  });
+  const settlement = await solver.buildSettlement(trade);
+  await solver.simulate(settlement);
+}
+```
+
+When you build the settlement, use `jitOrder` and `executedAmount` for the fill-or-kill JIT trade. Include its `preInteraction` so Settlement calls `Silo.commit` before signature verification. Simulate the full settlement against current state before submission. If the balance or floor changed, read the terms again and get a new quote.
 
 ## Funding and simulation
 
-Use zero for `expectedAdapterFunding` when the adapter is disabled. For `ApprovalFundingAdapter`, read `availableBalance(sellToken)`: the smaller of the source balance and allowance to the adapter. `IFundingAdapter` defines only `fund(token)` and has no mandatory quote method. Other adapters need their own funding estimate. The solver supplies no funding amount or arbitrary bytes to the adapter.
+If an adapter is configured, use `buildOrder` with `sellAmount = siloBalance + expectedAdapterFunding`. For `ApprovalFundingAdapter`, read `availableBalance(sellToken)`: the smaller of the source balance and allowance to the adapter. `IFundingAdapter` defines only `fund(token)` and has no mandatory quote method. Other adapters need their own funding estimate. The solver supplies no funding amount or arbitrary bytes to the adapter.
 
 `commit` attempts funding after caller, token, and positive-amount checks. It then requires the actual combined Silo balance to equal the order's sell amount. Source inventory, allowance, or adapter configuration changes can make this check revert. An outer transaction revert rolls back source transfers. `verify` before funding still checks only the current Silo balance, so it can reject an order that includes expected funding. Simulate the full settlement with the commit pre-interaction.
 
