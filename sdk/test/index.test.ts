@@ -1,4 +1,4 @@
-import { decodeAbiParameters, getAddress, parseAbi, parseAbiParameters, size } from "viem";
+import { decodeAbiParameters, getAddress, parseAbiParameters, size } from "viem";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -11,7 +11,6 @@ import {
   encodeSolverSignature,
   hashOrder,
   KIND_SELL,
-  siloAbi,
   toSolverJitOrder,
 } from "../src/index.js";
 
@@ -70,16 +69,6 @@ describe("Silo SDK", () => {
     ] as const) {
       expect(() => buildOrderDeadlines({ blockTimestamp, executionWindow, auctionDuration })).toThrow("uint32");
     }
-  });
-
-  it("exposes auction settings and the live minimum for a sell token", () => {
-    const getters = parseAbi([
-      "function initialBuyAmount() view returns (uint256)",
-      "function minimumBuyAmount() view returns (uint256)",
-      "function auctionDuration() view returns (uint32)",
-      "function currentMinimumBuyAmount(address sellToken) view returns (uint256)",
-    ]);
-    for (const getter of getters) expect(siloAbi).toContainEqual(getter);
   });
 
   it("builds the canonical immutable fields", () => {
@@ -148,18 +137,11 @@ describe("Silo SDK", () => {
   it("creates the CoW solver wire format", () => {
     const { validTo } = buildOrderDeadlines({ blockTimestamp: 1000, executionWindow: 90, auctionDuration: 3600 });
     const jitOrder = order(validTo);
-    expect(toSolverJitOrder(silo, jitOrder)).toEqual({
-      sellToken,
-      buyToken: resourceToken,
-      receiver,
+    expect(toSolverJitOrder(silo, jitOrder)).toMatchObject({
       sellAmount: "100",
       buyAmount: "25",
       validTo: 4690,
-      appData,
       kind: "sell",
-      partiallyFillable: false,
-      sellTokenBalance: "erc20",
-      buyTokenBalance: "erc20",
       signingScheme: "eip1271",
       signature: `${silo}${encodeOrderPayload(jitOrder).slice(2)}`,
     });

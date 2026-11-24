@@ -30,19 +30,15 @@ contract SiloFactory is ISiloFactory {
     ) external override returns (ISilo silo) {
         if (initialBuyAmount == minimumBuyAmount) auctionDuration = 0;
         bytes32 salt_ = salt(msg.sender, userSalt);
-        silo = ISilo(
-            address(
-                new Silo{ salt: salt_ }(
-                    settlement,
-                    resourceToken,
-                    resourceRecipient,
-                    initialBuyAmount,
-                    minimumBuyAmount,
-                    auctionDuration,
-                    appData,
-                    msg.sender
-                )
-            )
+        silo = new Silo{ salt: salt_ }(
+            settlement,
+            resourceToken,
+            resourceRecipient,
+            initialBuyAmount,
+            minimumBuyAmount,
+            auctionDuration,
+            appData,
+            msg.sender
         );
         emit SiloCreated(
             address(silo),

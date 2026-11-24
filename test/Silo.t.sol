@@ -581,60 +581,24 @@ contract SiloTest is Test {
 
     function testConstructorRejectsZeroAddresses() public {
         vm.expectRevert(ISilo.ZeroAddress.selector);
-        new Silo(
-            ISettlement(address(0)),
-            IERC20(address(resource)),
-            recipient,
-            MINIMUM_BUY_AMOUNT,
-            MINIMUM_BUY_AMOUNT,
-            0,
-            APP_DATA,
-            owner
-        );
+        new Silo(ISettlement(address(0)), IERC20(address(resource)), recipient, 1, 1, 0, APP_DATA, owner);
 
         vm.expectRevert(ISilo.ZeroAddress.selector);
-        new Silo(settlement, IERC20(address(0)), recipient, MINIMUM_BUY_AMOUNT, MINIMUM_BUY_AMOUNT, 0, APP_DATA, owner);
+        new Silo(settlement, IERC20(address(0)), recipient, 1, 1, 0, APP_DATA, owner);
 
         vm.expectRevert(ISilo.ZeroAddress.selector);
-        new Silo(
-            settlement,
-            IERC20(address(resource)),
-            address(0),
-            MINIMUM_BUY_AMOUNT,
-            MINIMUM_BUY_AMOUNT,
-            0,
-            APP_DATA,
-            owner
-        );
+        new Silo(settlement, IERC20(address(resource)), address(0), 1, 1, 0, APP_DATA, owner);
     }
 
     function testConstructorRejectsZeroVaultRelayer() public {
         MockSettlement invalidSettlement = new MockSettlement(DOMAIN_SEPARATOR, address(0));
         vm.expectRevert(ISilo.ZeroAddress.selector);
-        new Silo(
-            invalidSettlement,
-            IERC20(address(resource)),
-            recipient,
-            MINIMUM_BUY_AMOUNT,
-            MINIMUM_BUY_AMOUNT,
-            0,
-            APP_DATA,
-            owner
-        );
+        new Silo(invalidSettlement, IERC20(address(resource)), recipient, 1, 1, 0, APP_DATA, owner);
     }
 
     function testConstructorRejectsZeroOwner() public {
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableInvalidOwner.selector, address(0)));
-        new Silo(
-            settlement,
-            IERC20(address(resource)),
-            recipient,
-            MINIMUM_BUY_AMOUNT,
-            MINIMUM_BUY_AMOUNT,
-            0,
-            APP_DATA,
-            address(0)
-        );
+        new Silo(settlement, IERC20(address(resource)), recipient, 1, 1, 0, APP_DATA, address(0));
     }
 
     function testFuzzVerifyAcceptsCanonicalOrder(uint128 sellAmount, uint128 buyAmount, uint16 validFor) public {

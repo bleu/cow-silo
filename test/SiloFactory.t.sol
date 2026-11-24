@@ -30,37 +30,20 @@ contract SiloFactoryTest is Test {
         address recipient = makeAddr("recipient");
         bytes32 appData = keccak256("appData");
         bytes32 userSalt = keccak256("userSalt");
-        address predicted = factory.predictSiloAddress(
-            creator, IERC20(address(resource)), recipient, MINIMUM_BUY_AMOUNT, MINIMUM_BUY_AMOUNT, 0, appData, userSalt
-        );
-
-        vm.prank(creator);
-        ISilo deployedSilo = factory.createSilo(
-            IERC20(address(resource)), recipient, MINIMUM_BUY_AMOUNT, MINIMUM_BUY_AMOUNT, 0, appData, userSalt
-        );
-        Silo silo = Silo(address(deployedSilo));
-
-        assertEq(address(silo), predicted);
-        assertEq(silo.owner(), creator);
-        assertEq(address(silo.resourceToken()), address(resource));
-        assertEq(silo.resourceRecipient(), recipient);
-        assertEq(silo.minimumBuyAmount(), MINIMUM_BUY_AMOUNT);
-    }
-
-    function testCreatesSiloWithAuctionCurve() public {
         IERC20 token = IERC20(address(resource));
-        address recipient = makeAddr("recipient");
-        bytes32 appData = keccak256("appData");
-        bytes32 userSalt = keccak256("userSalt");
-        address predicted = factory.predictSiloAddress(
-            address(this), token, recipient, 20 ether, MINIMUM_BUY_AMOUNT, 300, appData, userSalt
-        );
+        address predicted =
+            factory.predictSiloAddress(creator, token, recipient, 20 ether, MINIMUM_BUY_AMOUNT, 300, appData, userSalt);
         vm.expectEmit(true, true, true, true, address(factory));
         emit ISiloFactory.SiloCreated(
-            predicted, address(this), address(token), recipient, 20 ether, MINIMUM_BUY_AMOUNT, 300, appData, userSalt
+            predicted, creator, address(token), recipient, 20 ether, MINIMUM_BUY_AMOUNT, 300, appData, userSalt
         );
+        vm.prank(creator);
         ISilo silo = factory.createSilo(token, recipient, 20 ether, MINIMUM_BUY_AMOUNT, 300, appData, userSalt);
+
         assertEq(address(silo), predicted);
+        assertEq(Silo(address(silo)).owner(), creator);
+        assertEq(address(silo.resourceToken()), address(resource));
+        assertEq(silo.resourceRecipient(), recipient);
         assertEq(silo.initialBuyAmount(), 20 ether);
         assertEq(silo.minimumBuyAmount(), MINIMUM_BUY_AMOUNT);
         assertEq(silo.auctionDuration(), 300);

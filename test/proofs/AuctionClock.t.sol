@@ -43,12 +43,6 @@ contract AuctionClockTest is Test {
         vm.warp(block.timestamp + 2 hours);
     }
 
-    function testTenMinutesAfterSaleUsesRestartedCurve() public {
-        _settle(_order(tokenA, 100), true, "");
-        vm.warp(block.timestamp + 10 minutes);
-        assertEq(silo.currentMinimumBuyAmount(IERC20(address(tokenA))), 146);
-    }
-
     function testFilledOrderCannotBeCommittedAgain() public {
         GPv2Order.Data memory order = _order(tokenA, 100);
         _settle(order, true, "");
@@ -150,6 +144,8 @@ contract AuctionClockTest is Test {
         _settle(_order(tokenA, 100), true, "");
         tokenA.mint(address(silo), 11);
         uint256 saleTime = block.timestamp;
+        vm.warp(saleTime + 10 minutes);
+        assertEq(silo.currentMinimumBuyAmount(IERC20(address(tokenA))), 146);
         vm.warp(saleTime + 30 minutes);
         _settle(_order(tokenA, 138), false, "");
         vm.warp(saleTime + 40 minutes);
