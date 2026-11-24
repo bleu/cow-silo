@@ -3,11 +3,21 @@ import {
   encodeAbiParameters,
   encodeFunctionData,
   keccak256,
-  parseAbi,
   parseAbiParameters,
   type Address,
   type Hex,
 } from "viem";
+import { orderParameter, siloAbi } from "./abi.js";
+import type { OrderTerms } from "./reader.js";
+
+export { approvalFundingAdapterAbi, siloAbi } from "./abi.js";
+export {
+  readOrderTerms,
+  readOrderTermsBatch,
+  type OrderTerms,
+  type OrderTermsResult,
+  type SiloPair,
+} from "./reader.js";
 
 export type SiloOrder = {
   sellToken: Address;
@@ -53,39 +63,41 @@ export const KIND_SELL =
 export const BALANCE_ERC20 =
   "0x5a28e9363bb942b639270062aa6bb295f434bcdfc42c97267bf003f272060dc9" as const;
 
-const orderParameter = "(address sellToken, address buyToken, address receiver, uint256 sellAmount, uint256 buyAmount, uint32 validTo, bytes32 appData, uint256 feeAmount, bytes32 kind, bool partiallyFillable, bytes32 sellTokenBalance, bytes32 buyTokenBalance) order";
 const orderTuple = parseAbiParameters(orderParameter);
 
 const orderHashParameters = parseAbiParameters(
   "bytes32 typeHash, address sellToken, address buyToken, address receiver, uint256 sellAmount, uint256 buyAmount, uint32 validTo, bytes32 appData, uint256 feeAmount, bytes32 kind, bool partiallyFillable, bytes32 sellTokenBalance, bytes32 buyTokenBalance",
 );
 
-export const siloAbi = parseAbi([
-  `function commit(${orderParameter})`,
-  "function domainSeparator() view returns (bytes32)",
-  "function resourceToken() view returns (address)",
-  "function resourceRecipient() view returns (address)",
-  "function initialBuyAmount() view returns (uint256)",
-  "function minimumBuyAmount() view returns (uint256)",
-  "function auctionDuration() view returns (uint32)",
-  "function currentMinimumBuyAmount(address sellToken) view returns (uint256)",
-  "function fundingAdapter() view returns (address)",
-  "function setFundingAdapter(address newAdapter)",
-  "function FUNDING_GAS_LIMIT() view returns (uint256)",
-  "function appData() view returns (bytes32)",
-  "function isCommitted(bytes32 orderHash) view returns (bool)",
-]);
+export function buildJitTrade(terms: OrderTerms, limit: { buyAmount: bigint; validTo: number }) {
+  const executionDeadline = limit.validTo - terms.auctionDuration;
+  assertExecutionWindow(executionDeadline - Number(terms.blockTimestamp));
 
-export const approvalFundingAdapterAbi = parseAbi([
-  "function source() view returns (address)",
-  "function silo() view returns (address)",
-  "function availableBalance(address sellToken) view returns (uint256)",
-  "function fund(address sellToken)",
-]);
+  const order = buildOrder({
+    sellToken: terms.sellToken,
+    resourceToken: terms.buyToken,
+    resourceRecipient: terms.receiver,
+    sellAmount: terms.sellAmount,
+    currentMinimumBuyAmount: terms.currentMinimumBuyAmount,
+    appData: terms.appData,
+    ...limit,
+  });
+  return {
+    jitOrder: toSolverJitOrder(terms.silo, order),
+    executedAmount: order.sellAmount.toString(),
+    preInteraction: buildCommitInteraction(terms.silo, order),
+  };
+}
 
 function assertUint32(value: number, field: string): void {
   if (!Number.isSafeInteger(value) || value < 0 || value > 0xffff_ffff) {
     throw new Error(`${field} must be a uint32 integer`);
+  }
+}
+
+function assertExecutionWindow(seconds: number): void {
+  if (!Number.isSafeInteger(seconds) || seconds < 0 || seconds > 300) {
+    throw new Error("executionWindow must be an integer between 0 and 300 seconds");
   }
 }
 
@@ -95,9 +107,7 @@ export function buildOrderDeadlines(input: {
   executionWindow: number;
   auctionDuration: number;
 }): { executionDeadline: number; validTo: number } {
-  if (!Number.isSafeInteger(input.executionWindow) || input.executionWindow < 0 || input.executionWindow > 300) {
-    throw new Error("executionWindow must be an integer between 0 and 300 seconds");
-  }
+  assertExecutionWindow(input.executionWindow);
   assertUint32(input.blockTimestamp, "blockTimestamp");
   assertUint32(input.auctionDuration, "auctionDuration");
   const executionDeadline = input.blockTimestamp + input.executionWindow;
