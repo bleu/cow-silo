@@ -10,7 +10,7 @@ Install the root project dependencies and Foundry, then run from the repository 
 pnpm test:mainnet
 ```
 
-The default public RPC is `https://eth.drpc.org`. The default fork block is `26_399_049`. The endpoint must provide historical code and storage for that block.
+The default public RPC is `https://eth.drpc.org`. The default fork block is `26_399_049` (2026-11-12). This endpoint and block passed all seven tests on 2026-11-16. The endpoint must provide historical code and storage for that block. Public RPC availability and rate limits can change.
 
 Override the endpoint or block explicitly:
 
@@ -27,8 +27,6 @@ pnpm test:mainnet --match-test testExternalTreasuryFundsAndSettlesOrder -vvvv
 The `mainnet` Foundry profile uses `integration/mainnet` as its test root. The default profile and `pnpm test` remain offline. Fork tests run with one thread to reduce RPC load. RPC errors and invalid fixtures fail the tests; the suite does not skip them or fall back to the latest block. A different block can require new solver or token-holder fixtures.
 
 ## Coverage
-
-The fixture uses a flat auction. The immutable initial and floor amounts are both `5e14` wei of WETH, so the effective `auctionDuration` is zero. Each settlement calls `Silo.commit(order)` before the trade. Here CoW `validTo` equals the Silo execution deadline, five minutes after the order is built. The [local auction clock proof](../../test/proofs/README.md) covers a declining auction with a longer `validTo`.
 
 - An external treasury funds an empty Silo and completes a trade.
 - Existing Silo inventory combines with allowance-limited treasury funding. Unapproved inventory stays at the source.

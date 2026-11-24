@@ -1,76 +1,60 @@
 # Solver SDK
 
-`@cow-silo/sdk` reads order terms through your RPC and builds CoW solver JIT trades. You supply the Silo and sell token addresses and price the inventory. The SDK has no hosted indexer or price feed. See [Solvers](/actors/solvers) for a watchlist example that uses `OrderCommitted` logs and seed tokens.
+`@cow-silo/sdk` reads onchain order terms and builds CoW solver JIT trades. You supply the Silo and sell token addresses. The SDK has no hosted server, price feed, or automatic token discovery. For a bounded log query that uses the `OrderCommitted` event in the exported `siloAbi`, see [Solvers](/actors/solvers).
 
 ## Read order terms
 
-`readOrderTerms(client, { silo, sellToken, blockNumber? })` returns `OrderTerms` for the full sell balance held by the Silo. It returns `null` for a zero balance or the Silo's own resource token. It throws if a read fails. The reader does not include uncollected protocol fees or expected adapter funding.
+`readOrderTerms(client, { silo, sellToken, blockNumber? })` returns `OrderTerms` for the full sell balance, or `null` if the Silo has nothing it can sell for that pair. It throws if a read fails. It only reads tokens held by the Silo; it does not include uncollected protocol fees.
 
-`readOrderTermsBatch(client, { pairs, blockNumber? })` reads an array of `{ silo, sellToken }` pairs at one block. It shares repeated reads and returns one result per pair in request order:
+`readOrderTermsBatch(client, { pairs, blockNumber? })` takes an array of `{ silo, sellToken }` pairs. It returns one result per pair, in request order:
 
 | Result | Meaning |
 | --- | --- |
 | `{ status: "available", terms }` | The pair has order terms at the selected block. |
 | `{ status: "empty" }` | The sell balance was zero, or the sell token was the Silo's resource token. |
-| `{ status: "error", error }` | A read for this pair failed. `error` is an `Error`. |
+| `{ status: "error", error }` | The pair could not be read. `error` is an `Error`. |
 
-Both readers use the latest block if you omit `blockNumber`. A shared RPC error, such as a failed block lookup, can cause the whole batch to throw. Use a viem public client on the Silo's chain with Multicall3 configured at `chain.contracts.multicall3`. Multicall3 must exist at the selected block and the RPC must retain the state for that block. The watchlist example also requires `eth_getLogs` for the requested block range.
+Both readers use the latest block if you omit `blockNumber`. A shared RPC error, such as a failed block lookup, can cause the whole batch to throw. Use a viem public client on the Silo's chain with Multicall3 configured at `chain.contracts.multicall3`. The RPC must support contract reads at the selected block, and Multicall3 must exist at that block. For older blocks, use an RPC that retains the required historical state. The solver log example also requires `eth_getLogs` for the requested block range.
 
-| `OrderTerms` field | Value at the selected block |
+Each `OrderTerms` snapshot contains:
+
+| Fields | Values |
 | --- | --- |
-| `silo`, `sellToken`, `buyToken`, `receiver` | Addresses. `buyToken` is the resource token and `receiver` is its recipient. |
-| `sellAmount` | Full Silo balance in the sell token's smallest unit (`bigint`). |
-| `minimumBuyAmount` | Static floor in the buy token's smallest unit (`bigint`). |
-| `currentMinimumBuyAmount` | Live minimum for this sell token's full balance, in the same buy-token units (`bigint`). |
-| `auctionDuration` | Effective duration from `Silo.auctionDuration()`, in seconds (`number`). Zero for a flat auction. |
+| `silo`, `sellToken`, `buyToken`, `receiver` | Addresses. `buyToken` is the resource token and `receiver` is its configured recipient. |
+| `sellAmount`, `minimumBuyAmount` | Full sell balance and output floor, both `bigint` values in the respective token's smallest unit. |
+| `currentMinimumBuyAmount`, `auctionDuration` | Minimum for this sell token at the selected block (`bigint`) and effective duration in seconds (`number`). |
 | `appData`, `domainSeparator` | Silo app data and the Settlement domain separator. |
-| `blockNumber`, `blockTimestamp` | Snapshot block number and Unix time in seconds, both `bigint`. |
+| `blockNumber`, `blockTimestamp` | Snapshot block number and Unix time in seconds, both `bigint` values. |
 
 ## Build a JIT trade
 
-This example assumes funding is disabled at `blockNumber`. Supply a viem public `client` and a `quoteBuyAmount` function that prices the full `terms.sellAmount` in buy-token units. A quote can exceed `terms.minimumBuyAmount` and still be too low: `buildJitTrade` checks it against `terms.currentMinimumBuyAmount`.
+`buildJitTrade(terms, { buyAmount, validTo })` uses your quoted `buyAmount` (`bigint`) as the order limit. It must be at least `terms.currentMinimumBuyAmount`. Use `buildOrderDeadlines` as shown in the [solver example](/actors/solvers#quote-build-and-simulate). The execution deadline is at most five minutes after the block timestamp. CoW `validTo` adds `terms.auctionDuration` so Settlement retains the fill record until the restarted auction reaches the floor. Check that your driver accepts this expiry.
 
-```ts
-import { buildJitTrade, buildOrderDeadlines, readOrderTerms } from "@cow-silo/sdk";
+The result contains `jitOrder` with the Silo-prefixed ERC-1271 signature, `executedAmount` as the full sell amount in decimal string form, and `preInteraction` for `Silo.commit`. Your solver assembles and simulates the settlement.
 
-const terms = await readOrderTerms(client, { silo, sellToken, blockNumber });
-if (terms === null) throw new Error("No sellable Silo inventory");
+## Lower-level functions
 
-const buyAmount = await quoteBuyAmount(terms);
-const executionWindow = 300;
-const { executionDeadline, validTo } = buildOrderDeadlines({
-  blockTimestamp: Number(terms.blockTimestamp),
-  executionWindow,
-  auctionDuration: terms.auctionDuration,
-});
-const { jitOrder, executedAmount, preInteraction } = buildJitTrade(terms, { buyAmount, validTo });
-```
-
-`executionDeadline` is the last Unix second at which the Silo can execute the order. `executionWindow` can be 0 through 300 whole seconds. The wire expiry is `validTo = executionDeadline + terms.auctionDuration`. For example, at timestamp 100000 with a 300-second window and a 7200-second auction, `executionDeadline` is 100300 and `validTo` is 107500. The extra time keeps Settlement's fill record available until the restarted auction reaches the floor. For a flat auction the deadlines are equal. Check that the intended driver accepts the wire expiry.
-
-`jitOrder` includes the ERC-1271 signature with the 20-byte Silo address prefix. `executedAmount` is the full sell amount as a decimal string. Include `preInteraction` so Settlement calls `Silo.commit(order)` with the same full order. Simulate the full settlement before submission: a sale of the same token can raise the live minimum, and the balance can change.
-
-## Lower-level helpers
-
-| Helper | Use |
+| Function | Result |
 | --- | --- |
-| `buildOrder(input)` | Build the order from supplied values. Requires `currentMinimumBuyAmount` and rejects a lower `buyAmount`. |
-| `encodeOrderPayload(order)` | Encode the raw ERC-1271 payload for `Silo.isValidSignature`. |
-| `encodeSolverSignature(silo, order)` | Prefix the payload with the 20-byte Silo address for the solver API. |
-| `hashOrder(order, domainSeparator)` | Compute the order digest using the Settlement domain separator. |
-| `buildCommitInteraction(silo, order)` | Encode `Silo.commit(order)` as a pre-interaction. The Silo computes the digest. |
-| `buildCommitInteractions(silo, orders)` | Build one pre-interaction per order. Use distinct sell tokens for the same Silo. |
-| `toSolverJitOrder(silo, order)` | Format the JIT order and its signature for the solver API. |
+| `buildOrder` | Canonical Silo order data. Requires `currentMinimumBuyAmount` and rejects a lower limit. |
+| `encodeOrderPayload` | Raw ERC-1271 payload for `Silo.isValidSignature`. |
+| `encodeSolverSignature` | CoW solver API signature with the Silo owner prefix. |
+| `hashOrder` | CoW EIP-712 order digest from a Settlement domain separator. |
+| `buildCommitInteraction(silo, order)` | Pre-interaction for `Silo.commit(order)`. |
+| `buildCommitInteractions(silo, orders)` | Pre-interactions for distinct sell tokens. |
+| `toSolverJitOrder` | CoW solver API JIT order object. |
 
 ## Funding adapter ABI
 
 `siloAbi` includes `fundingAdapter()`, `setFundingAdapter(address)`, and `FUNDING_GAS_LIMIT()`. Funding starts disabled. Only the Silo owner can replace or disable the adapter.
 
-`approvalFundingAdapterAbi` exposes `source()`, `silo()`, `availableBalance(token)`, and `fund(token)`. The source must approve the adapter as spender. Only the configured Silo can call `fund`. Other adapters need their own estimate because `IFundingAdapter` requires only `fund(token)`.
+`approvalFundingAdapterAbi` exposes `source()`, `silo()`, `availableBalance(token)`, and `fund(token)`. The source must approve the adapter as spender, not the Silo or Vault Relayer. Only the configured Silo can call `fund`.
 
-For `ApprovalFundingAdapter`, use `buildOrder` with the Silo balance plus `availableBalance(sellToken)` at the same block. The latter is the smaller of the source balance and its allowance to the adapter. A reader result of `null` or `empty` for a zero Silo balance does not rule out adapter funding. Read the live minimum, effective auction duration, and timestamp at the quote block. See [Funding and simulation](/actors/solvers#funding-and-simulation) for the exact balance check during `commit` and the limits of standalone `verify`.
+For `ApprovalFundingAdapter`, set the order's `sellAmount` to the current Silo balance plus `availableBalance(sellToken)`. That view returns the smaller of the source balance and allowance to the adapter. Use zero expected funding when no adapter is configured. The shared `IFundingAdapter` interface requires only `fund(token)`; there is no mandatory quote method, amount argument, or arbitrary bytes input.
 
-Run the SDK tests from the repository root:
+These reads are estimates for order construction. Inventory, allowances, and adapter configuration can change before execution. `commit` attempts funding with a fixed 200,000 gas cap, ignores failure and return data, then requires the actual Silo balance to match `sellAmount` exactly. The cap does not guarantee success for an undergassed outer transaction. A prefunded fallback must still match the supplied amount. Simulate the complete settlement, including commit. A standalone `verify` checks only the current balance and does not fund the Silo.
+
+Run the SDK tests:
 
 ```sh
 pnpm --filter @cow-silo/sdk test

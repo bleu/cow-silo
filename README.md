@@ -6,7 +6,7 @@
 
 CoW Silo converts protocol fee tokens through CoW Protocol solver competition.
 
-A Silo sells the full balance of each fee token for one resource token. Its auction sets the minimum output for each sale. Solvers find balances and propose trades through CoW Protocol. Tokens need no registration, and the auction needs no keeper.
+The contracts are small. They do not contain a token registry, an oracle, a router, or a keeper. Solvers find Silo balances. Solvers set candidate prices. CoW Protocol selects the winning settlement.
 
 > [!WARNING]
 > This repository is an early implementation. The contracts have not completed an audit. CoW Protocol must recognize deployed Silo addresses as surplus-capturing JIT-order owners before production use.
@@ -36,14 +36,15 @@ flowchart LR
 
 ## How the order works
 
-The Silo fixes three values at deployment: `initialBuyAmount` and `minimumBuyAmount` (both `uint256`, in the resource token's smallest unit), and `auctionDuration` (`uint32`, in seconds). The floor, `minimumBuyAmount`, must be positive. For a declining auction, set the initial amount above the floor and use a positive duration. Equal amounts give a flat auction: `auctionDuration()` returns zero regardless of the supplied duration.
+1. A protocol sends fee tokens to a Silo or configures an optional funding adapter.
+2. Solvers read the Silo balance and any expected adapter funding.
+3. Each solver reads the current minimum buy amount and builds a JIT order at or above that value.
+4. The solver adds one `Silo.commit` pre-interaction for each Silo order in the settlement.
+5. CoW Protocol scores the solutions.
+6. The winning settlement sells the full token balance.
+7. The settlement sends the resource token to the fixed recipient.
 
-Each sell token's clock starts at Silo deployment. Only a full fill resets that token's clock. A deposit or a commit without a fill does not reset it. Before the duration ends, the minimum output is `initialBuyAmount - floor((initialBuyAmount - minimumBuyAmount) * elapsed / auctionDuration)`, where `elapsed` is the number of seconds since the clock started or last reset. At or after the duration, or for a flat auction, the minimum is `minimumBuyAmount`.
-
-1. Read the sell token's balance and any expected adapter funding. Build a full-balance sell order with `buyAmount` at or above `currentMinimumBuyAmount(sellToken)`. A new sale can reset the minimum, so check the quote again before settlement.
-2. Choose a Silo execution deadline no more than five minutes after the current block timestamp. Set the CoW order's `validTo` to `executionDeadline + auctionDuration()`. This keeps the fill record available until the minimum reaches the floor. It does not extend the Silo execution window. Check that the intended driver accepts the chosen CoW order lifetime.
-3. Add `Silo.commit(order)` as a settlement pre-interaction. Use at most one active order per Silo and sell token in the batch. Orders for different sell tokens can settle together.
-4. The winning settlement sells the full balance after funding and sends the resource token to the fixed recipient.
+The Silo checks the token pair, recipient, full balance after funding, minimum buy amount, expiry, app data, fee, order kind, and balance type. The minimum is denominated in the resource token. It is an execution floor, not a market-price oracle. Each sell token has its own [auction clock](./docs/pages/how-it-works.mdx#competition). The owner can replace or disable the funding adapter. CoW competition is the price-discovery mechanism.
 
 Funding is disabled by default. The owner can enable it with `setFundingAdapter`. During `commit`, the Silo attempts `fund(sellToken)` with a fixed 200,000 gas cap before checking its exact balance. It ignores adapter failure and return data. The cap does not guarantee success if the outer transaction has too little gas. Without funding, the prefunded Silo balance must still equal the order's sell amount.
 
@@ -60,11 +61,12 @@ Requirements:
 ```sh
 git submodule update --init --recursive
 pnpm install --frozen-lockfile
+forge test
 pnpm test
 pnpm build
 ```
 
-`pnpm test` runs the Solidity and SDK tests offline. The [auction clock proof](./test/proofs/README.md) uses the production Silo with pinned CoW Settlement bytecode on a local chain. Run the optional [mainnet fork tests](./integration/mainnet/README.md) with `pnpm test:mainnet`. These tests need an RPC endpoint and run only on a local fork.
+Run the optional [mainnet fork tests](./integration/mainnet/README.md) with `pnpm test:mainnet`. They use a public RPC and execute complete trades through the deployed Settlement and Vault Relayer on a local fork. The default tests remain offline.
 
 Run the documentation site:
 
@@ -74,21 +76,18 @@ pnpm docs:dev
 
 ## Testnet deployment
 
-Copy `.env.example` to `.env`. Set the testnet RPC URL, signer key, and CoW Settlement address. Deploy the factory first:
+Copy `.env.example`. Set the CoW Settlement address for the target chain. Then deploy the factory and one Silo.
 
 ```sh
 source .env
 forge script script/DeployFactory.s.sol:DeployFactory \
   --rpc-url "$RPC_URL" --broadcast --verify
-```
 
-Set `SILO_FACTORY` in `.env` to the new factory address. Set `RESOURCE_TOKEN`, `RESOURCE_RECIPIENT`, `INITIAL_BUY_AMOUNT`, `MINIMUM_BUY_AMOUNT`, and `AUCTION_DURATION`. Use the resource token's smallest unit for both amounts and seconds for the duration. To use a Burner as the recipient, deploy it first.
-
-```sh
-source .env
 forge script script/DeploySilo.s.sol:DeploySilo \
   --rpc-url "$RPC_URL" --broadcast --verify
 ```
+
+Set `INITIAL_BUY_AMOUNT` and `MINIMUM_BUY_AMOUNT` in the resource token's smallest unit. Set `AUCTION_DURATION` in seconds. Use the Burner address as `RESOURCE_RECIPIENT` when the resource token must leave circulation. Deploy the Burner first.
 
 No official Silo deployment exists. See [the deployment registry](./deployments/addresses.json).
 

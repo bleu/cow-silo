@@ -2,38 +2,53 @@
 
 ## Silo
 
-`Silo` owns CoW orders and validates them through ERC-1271. Deployment fixes the Settlement contract, Vault Relayer, resource token, resource recipient, app data hash, and Settlement EIP-712 domain separator. It also fixes the auction terms:
+`Silo` is an ERC-1271 order owner. Most order rules are immutable. A two-step owner can change the funding adapter.
 
-| Getter | Type | Meaning |
-| --- | --- | --- |
-| `initialBuyAmount()` | `uint256` | Required resource-token output at the start of each auction. |
-| `minimumBuyAmount()` | `uint256` | Output floor at the end of the auction. Must be greater than zero. |
-| `auctionDuration()` | `uint32` | Effective auction duration in seconds. Equal initial and floor amounts give a flat auction with an effective duration of zero. |
+Permanent values:
 
-Both amounts are in the resource token's smallest unit. A descending auction requires an initial amount above the floor and a positive duration. The deployment timestamp plus the effective duration must fit in a `uint32`. Read `currentMinimumBuyAmount(sellToken)` for the amount required now. The [auction calculation](/how-it-works#auction) applies separately to each sell token.
+- CoW Settlement contract.
+- CoW Vault Relayer.
+- Resource token.
+- Resource recipient.
+- CoW app data hash.
+- Settlement EIP-712 domain separator.
+- Initial buy amount, minimum buy amount (floor), and auction duration.
+
+Managed values:
+
+- Funding adapter, initially the zero address. The owner can replace it or set it to zero to disable funding.
+
+The owner cannot change the resource token, recipient, Settlement contract, Vault Relayer, or app data. The owner cannot transfer tokens from the Silo.
+
+Main functions:
 
 | Function | Caller | Result |
 | --- | --- | --- |
-| `currentMinimumBuyAmount(sellToken)` | Any account | Returns the required output for a sale of the full sell-token balance. |
-| `setFundingAdapter(adapter)` | Owner only | Changes the funding adapter. Zero disables funding. Emits `FundingAdapterSet`. |
-| `fundingAdapter()` | Any account | Returns the adapter address, or zero if funding is disabled. |
-| `commit(order)` | Settlement only | Checks the execution window, attempts funding, checks the full balance, and approves the Vault Relayer if needed. The Silo hashes the supplied order and commits it for this transaction. |
-| `isValidSignature(hash, signature)` | Called by Settlement | Decodes the order, checks its hash and commitment, and calls `verify`. |
-| `verify(order)` | Any account | Checks the order rules against the current balance, required output, and execution window. Does not call the funding adapter. |
-| `isCommitted(orderHash)` | Any account | Checks the transient commitment for an order hash. |
+| `currentMinimumBuyAmount(sellToken)` | Any account | Returns the minimum payment for the full balance of this sell token. |
+| `setFundingAdapter(adapter)` | Owner only | Replaces or disables the funding adapter. Emits `FundingAdapterSet`. |
+| `fundingAdapter()` | Any account | Returns the current adapter, or zero when disabled. |
+| `FUNDING_GAS_LIMIT()` | Any account | Returns the fixed adapter call gas cap of 200,000. |
+| `commit(order)` | Settlement only | Attempts funding, checks the exact resulting balance, and replaces the active commitment for this sell token. Approves the Vault Relayer when required. |
+| `isValidSignature(hash, signature)` | Settlement | Validates the committed order through ERC-1271. |
+| `verify(order)` | Any account | Checks the Silo order rules and current minimum. |
+| `isCommitted(orderHash)` | Any account | Reports whether an order is committed in the current transaction. |
 
 ## Funding adapters
 
-`IFundingAdapter` defines `fund(sellToken)`. It has no required quote method or solver-supplied amount. If an adapter is set, `commit` calls it before reading the Silo balance. `FUNDING_GAS_LIMIT()` is 200,000. The Silo ignores failure and return data. The resulting balance must equal `order.sellAmount`, even if the call failed.
+`IFundingAdapter` defines only `fund(sellToken)`. It has no required quote method, solver-supplied amount, or arbitrary bytes argument. After checking the Settlement caller, sell token, and positive sell amount, `commit` calls the configured adapter before reading the Silo balance. It skips the call when the adapter is zero. The call has a fixed 200,000 gas cap; failure and return data are ignored. The cap does not guarantee that an undergassed outer transaction succeeds.
 
-`ApprovalFundingAdapter(source, silo)` fixes a non-zero source and Silo at deployment. Only that Silo can call `fund`. Its `availableBalance(token)` returns the smaller of the source balance and the source allowance to the adapter. Funding transfers that amount to the Silo, or does nothing if it is zero. The source approves the adapter as the spender.
+The resulting Silo balance must exactly equal `sellAmount`. `verify` is a view call that checks the current Silo balance; it does not attempt funding.
+
+`ApprovalFundingAdapter(source, silo)` requires non-zero addresses and fixes both addresses at deployment. Only that Silo can call `fund`. Its `availableBalance(token)` returns `min(balanceOf(source), allowance(source, adapter))`. Funding transfers that amount from the source to the fixed Silo, or does nothing when the amount is zero. The source must approve the adapter as the spender, not the Silo or Vault Relayer.
 
 ## SiloFactory
 
-Call `createSilo(resourceToken, resourceRecipient, initialBuyAmount, minimumBuyAmount, auctionDuration, appData, userSalt)`. The caller becomes the initial owner. The factory emits `SiloCreated` for discovery. Read the effective duration from the Silo when building an order.
+`SiloFactory` uses CREATE2. The owner address and user salt define the deployment salt. The caller becomes the initial Silo owner. The factory emits a `SiloCreated` event for discovery.
 
-`predictSiloAddress` takes the intended owner followed by the same arguments as `createSilo`. CREATE2 uses a salt derived from the owner and user salt, and a hash of the Silo creation code and constructor arguments. The factory cannot change a deployed Silo or move its funds.
+The factory cannot change a Silo. It cannot move Silo funds.
+
+Pass the initial buy amount, floor, and duration to both factory creation and address prediction. Adapter configuration is a separate owner call after deployment. The changed Silo creation code changes CREATE2 address predictions, even with the same constructor inputs and salt. Existing deployed Silo instances are not upgraded.
 
 ## Burner
 
-`Burner` holds one immutable token. Any account can call `burn()` to send the full token balance to the dead address. The contract has no withdrawal function.
+`Burner` holds one immutable token. The `burn()` function transfers its full balance to the dead address. Any account can call the function. The contract has no withdrawal function.

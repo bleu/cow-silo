@@ -1,31 +1,30 @@
 # Deployers
 
-Before deployment, confirm that the chain supports the Cancun EVM. Check the CoW Settlement address and the Vault Relayer returned by Settlement. Confirm the JIT owner configuration with CoW Protocol and check that the intended driver accepts the order lifetime for your chosen auction duration.
+## Before deployment
 
-## Configure the Silo
+- Confirm the canonical CoW Settlement address.
+- Confirm that the Settlement returns the expected Vault Relayer.
+- Confirm Cancun EVM support on the target chain.
+- Select the resource token and recipient.
+- Select the initial buy amount and floor in the resource token's smallest unit. Check that your CoW driver accepts the [order expiry](/developers/sdk#build-a-jit-trade) for the chosen duration.
+- Select the initial owner. The factory caller becomes the owner.
+- Register the app data document and store its hash.
+- Obtain the required CoW JIT owner configuration.
 
-Select the resource token and recipient. If the output must go to a Burner, deploy the Burner first and use its address as the recipient. Register the app data document and use its hash.
+## Deploy
 
-The factory caller becomes the owner. Call `createSilo(resourceToken, resourceRecipient, initialBuyAmount, minimumBuyAmount, auctionDuration, appData, userSalt)` on `SiloFactory`. The auction settings are immutable:
+Use the Foundry scripts in `script/`. The scripts read `.env` values. They support simulation, broadcast, and verification.
 
-| Argument | Value |
-| --- | --- |
-| `initialBuyAmount` | Starting output for the full sell-token balance, in the resource token's smallest unit (`uint256`). Must be at least the floor. |
-| `minimumBuyAmount` | Nonzero output floor in the same unit (`uint256`). |
-| `auctionDuration` | Seconds for the required output to fall from the initial amount to the floor (`uint32`). Use a positive duration for a falling auction. |
+Deploy the Burner before the Silo when the output must leave circulation. Set the Burner address as `RESOURCE_RECIPIENT`.
 
-If you use `script/DeploySilo.s.sol`, set `INITIAL_BUY_AMOUNT`, `MINIMUM_BUY_AMOUNT`, and `AUCTION_DURATION` to the corresponding integer values. For example, with a six-decimal resource token, `150000000`, `100000000`, and `7200` specify a drop from 150 to 100 tokens over two hours.
+Set `INITIAL_BUY_AMOUNT` at or above `MINIMUM_BUY_AMOUNT`, which must be positive. Set `AUCTION_DURATION` in seconds. A descending auction needs a positive duration. Equal amounts give a fixed minimum and an effective duration of zero. Transfer ownership to the protocol through `transferOwnership`; the protocol must call `acceptOwnership`. Ownership controls the funding adapter. The auction settings are immutable.
 
-For a flat floor, set both amounts equal. The Silo then returns `0` from `auctionDuration()`, regardless of the duration supplied. A falling auction starts at deployment for every sell token. Later, a full sale restarts only the sold token's clock. Changing the auction settings requires a new Silo.
+Funding starts disabled. For optional source funding, deploy `ApprovalFundingAdapter(source, silo)` after the Silo, then have the Silo owner call `setFundingAdapter(adapter)`. The source must approve the adapter as the sell-token spender. Neither the Silo nor the Vault Relayer spends directly from the source. Record the adapter and source addresses with the deployment configuration.
 
-For CREATE2 prediction, call `predictSiloAddress` on the factory with the intended caller address followed by the same arguments as `createSilo`. For a flat auction, the factory uses zero for the duration in both calls. Use the factory for the Silo version you will deploy.
+Recompute CREATE2 predictions with the new Silo creation code. The same inputs and salt produce different addresses when the creation code changes. Existing deployed Silo instances remain unchanged; this feature does not upgrade them. Disabling or replacing an adapter does not revoke source allowances. Revoke old allowances separately.
 
-## Ownership and funding
+## Record
 
-Funding starts disabled. To enable source funding, deploy `ApprovalFundingAdapter(source, silo)` and have the owner call `setFundingAdapter(adapter)`. The source approves that adapter for each sell token. Replacing or disabling the adapter does not revoke those allowances. See [Protocols](/actors/protocols#optional-source-funding).
+Add verified addresses to `deployments/addresses.json`. Add the chain, factory, Silo, owner, Burner, Settlement, resource token, recipient, auction settings, app data, transaction hash, and source commit.
 
-To transfer control of the adapter, call `transferOwnership` and have the new owner call `acceptOwnership`. Neither owner can change the auction settings.
-
-## Record the deployment
-
-Record the chain, contract addresses, owner, auction settings, app data hash, deployment transaction, and source commit. Include the source and adapter if funding is enabled. Verify the deployed addresses before adding them to `deployments/addresses.json`. Do not label a deployment as official before an audit and the CoW integration review.
+Do not label a deployment as official before an audit and the CoW integration review.

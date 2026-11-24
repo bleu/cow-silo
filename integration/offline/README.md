@@ -6,11 +6,12 @@ The helper pins upstream commit `233c400c446c0d3c6f7a898892332818296b6053`. It s
 
 ## Start
 
-Requirements for running the commands from the repository root:
+Requirements:
 
-- Git and Foundry.
-- Docker 23 or later with Docker Compose.
-- Node.js 24 or later with npm.
+- Docker 23 or later.
+- Docker Compose.
+- Node.js 18 or later.
+- Foundry.
 
 ```sh
 ./integration/offline/manage.sh bootstrap
@@ -28,6 +29,6 @@ The first build can take several minutes.
 
 ## Current scope
 
-This profile starts the local services. It does not configure the driver to recognize a Silo as a surplus-capturing JIT owner or submit a Silo trade. Before using a driver, check that it accepts the chosen CoW `validTo`: the Silo execution deadline plus the effective `auctionDuration`. The Silo execution window is at most five minutes even when `validTo` is later.
+This profile starts the dependency stack. Foundry unit tests remain the default CI path. A complete Silo settlement scenario is roadmap work because the local driver must also recognize the Silo as a surplus-capturing JIT owner and a solver must submit the Silo JIT trade.
 
-For a contract test without the service stack, run the [local auction clock proof](../../test/proofs/README.md). It exercises the production Silo against pinned Settlement bytecode.
+Use the `cowprotocol/services` playground when a test needs the newest production service code. The grant playground is useful for isolated and repeatable local work.

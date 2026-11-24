@@ -2,37 +2,36 @@
 
 ## Collection
 
-A protocol can transfer ERC-20 fee tokens directly to its Silo. The Silo does not keep a list of tokens. No token registration or keeper is needed to start an auction.
+A protocol can transfer ERC-20 fee tokens directly to its Silo address. The Silo does not index tokens. Funding is disabled by default.
 
-The owner can also configure a funding adapter. Funding is disabled by default. With `ApprovalFundingAdapter`, the source approves the adapter to transfer inventory to the Silo. The available amount is the smaller of the source balance and its allowance to the adapter.
+The owner can instead configure a funding adapter with `setFundingAdapter`. `ApprovalFundingAdapter` pulls inventory from a fixed source into a fixed Silo. The source approves the adapter, not the Silo or Vault Relayer. Its available amount is the smaller of the source balance and allowance to the adapter.
 
-## Auction
+## Discovery
 
-All sell tokens start on the Silo's deployment timestamp, even tokens deposited later. After a full fill, only the sold token starts again, at the timestamp of the sale. A deposit, a commit without a fill, or a sale of another token does not restart its clock.
+Solvers index `SiloCreated` events from `SiloFactory`. They read token balances, the current minimum buy amount, and the configured funding adapter from each Silo. With funding enabled, the solver adds expected adapter funding to the current Silo balance to select `sellAmount`. `IFundingAdapter` has no required quote method; `availableBalance` is specific to `ApprovalFundingAdapter`.
 
-The auction sets the least acceptable output for a sale of the full balance. It uses the resource token's smallest unit. Let `initial` be `initialBuyAmount()`, `floorAmount` be `minimumBuyAmount()`, `D` be `auctionDuration()` in seconds, and `elapsed` be seconds since this token's auction started. `currentMinimumBuyAmount(sellToken)` returns:
+## Competition
 
-```text
-if D == 0 or elapsed >= D: floorAmount
-otherwise:                  initial - floor((initial - floorAmount) * elapsed / D)
-```
+Each solver creates a candidate JIT order. The order sells the complete token balance. It buys the fixed resource token. It pays the fixed resource recipient.
 
-`floor(...)` rounds the drop down to a whole unit. For example, with an initial amount of 110, a floor of 100, and a duration of 6 seconds, the required output is 109 after one second. It reaches 100 after six seconds and stays there until the next sale. With equal amounts, the effective duration is zero and the required output is constant.
+The solver sets `buyAmount`. This value is the order limit and must be at least `currentMinimumBuyAmount(sellToken)`. The minimum is denominated in the resource token. It defines the least acceptable output for one full-balance order; it does not assert fair market value. The Silo has no price oracle.
 
-## Building an order
+Each sell token starts at the initial buy amount when the Silo is deployed. The minimum falls linearly to the floor over the auction duration. The Silo rounds the required payment up and holds the floor until a sale. Only a full sale restarts that token at the initial amount. A deposit or an unfilled commit does not restart it. Equal initial and floor amounts give a fixed payment.
 
-Solvers can find Silos through the factory's `SiloCreated` event. A solver sets `sellAmount` to the current balance plus expected adapter funding. `availableBalance` is specific to `ApprovalFundingAdapter`; other adapters need their own estimate. The order sells the full resulting balance, buys the fixed resource token, and pays the fixed recipient. Set `buyAmount` at or above `currentMinimumBuyAmount(sellToken)`. A new sale of that token can raise the required output after the solver reads it.
-
-Use the chain's block timestamp to choose an execution deadline at most 300 seconds ahead. The CoW order field is `validTo = executionDeadline + auctionDuration()`. The Silo checks the execution deadline at commit and signature validation. The extra time keeps CoW's fill record available until a restarted auction reaches its floor. It does not give the solver extra time to execute. Verify that the intended driver accepts the chosen `validTo` lifetime.
+CoW Protocol scores competing settlements. A higher execution value improves the score when CoW recognizes the Silo as a surplus-capturing JIT owner.
 
 ## Settlement
 
-Include one `Silo.commit(order)` pre-interaction for each order, with at most one active order per sell token in each Silo. A batch can include orders for different sell tokens. The Settlement contract calls `commit` with the full order; the Silo computes its hash.
+The solution contains one pre-interaction for each Silo order. Each pre-interaction calls `Silo.commit` through the CoW Settlement contract. After checking the caller, token, and positive amount, the Silo attempts `fund(sellToken)` if an adapter is configured. The call has a fixed 200,000 gas cap. Failure and return data are ignored. A zero adapter skips funding.
 
-If an adapter is set, the Silo attempts funding with a 200,000 gas cap and ignores failure and return data. It then checks that its balance equals `order.sellAmount`, approves the Vault Relayer if needed, and records the commitment for this transaction. Simulate the full settlement: `verify` alone checks the existing balance and does not attempt funding. A successful commit without a trade can leave funded tokens in the Silo. If the transaction reverts, funding also reverts.
+The Silo then requires its actual token balance to equal the supplied sell amount. It approves the Vault Relayer when required and records the order hash in a dedicated transient-storage slot. If funding fails, prefunded inventory must still match the order amount exactly. Solvers must simulate the commit as part of the settlement; `verify` alone checks only the current balance and does not fund the Silo.
 
-During signature validation, the Silo checks the exact commitment and the current order rules. A full fill in CoW Settlement confirms the clock reset for that sell token. Transient commitments clear at the end of the transaction.
+A valid commit can move source inventory into the Silo without a later trade. Funding rolls back if the outer transaction reverts, but a successful transaction can leave the funded tokens in the Silo.
+
+The Settlement contract then verifies each ERC-1271 signature. The Silo accepts only committed orders. Orders for different sell tokens can execute together. For the same token, only the last commitment is valid. Transient storage clears at the end of the transaction.
 
 ## Output
 
-Settlement pays the executed resource-token output to the fixed recipient. A treasury can receive it directly. If the recipient is a Burner, any account can call `burn()` to send the Burner's full token balance to `0x000000000000000000000000000000000000dEaD`. This transfer does not reduce `totalSupply` unless the token implements that behavior.
+The Settlement contract sends the complete executed resource-token output to the immutable recipient. The recipient can be a treasury or a Burner. Output above the minimum remains with the recipient.
+
+The Burner sends its full balance to `0x000000000000000000000000000000000000dEaD`. This action removes standard ERC-20 tokens from circulation. It does not reduce `totalSupply` unless the token implements that behavior.

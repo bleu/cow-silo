@@ -1,23 +1,18 @@
 # Solvers
 
-A solver can use Silo inventory to fill user orders in a CoW batch or route it through external liquidity. The Silo has no price oracle. Quote the full sell balance and account for gas and token transfer behavior.
+A solver can use Silo inventory to fill user orders in a CoW batch or route it through external liquidity. The Silo sets a minimum buy amount in the resource token. Your solver must price the full sell balance and account for gas and token transfer behavior.
 
 ## Find candidate sell tokens
 
-Find Silo addresses in the `SiloCreated` logs of a factory you trust, or use a configured address. A Silo's `OrderCommitted` logs identify sell tokens from past commitments. They do not prove a sale or show the current balance. A new deposit can have no commitment log, so include seed tokens that your solver can price.
+Find Silo addresses in the `SiloCreated` logs of a factory you trust, or use a configured address. Each Silo's `OrderCommitted` logs identify tokens from past commitments. A log does not tell you the current balance, and a newly deposited token might have no log. Add seed token addresses from your own list to cover those deposits.
 
-The example uses a viem public `client` and a known `silo`. Use your saved watchlist and any new seed tokens as `seedTokens`, or start with an empty array. Save newly discovered pairs so they stay on the list after their last commitment leaves the log window. Adjust the window to your RPC provider's limit.
+This example uses a viem public `client` and a known `silo` with funding disabled. Check `fundingAdapter()` at the selected block before using a balance-only quote. If an adapter is configured, see [Funding and simulation](#funding-and-simulation). Set `seedTokens` to an empty array if you have no seeds. Adjust the log window to fit your RPC provider's limit. Keep the tokens you find in your watchlist so a pair stays on the list after its last commitment leaves the window.
 
 ```ts
-import { getAddress, zeroAddress } from "viem";
+import { getAddress } from "viem";
 import { buildJitTrade, buildOrderDeadlines, readOrderTermsBatch, siloAbi } from "@cow-silo/sdk";
 
 const blockNumber = await client.getBlockNumber();
-const adapter = await client.readContract({
-  address: silo, abi: siloAbi, functionName: "fundingAdapter", blockNumber,
-});
-if (adapter !== zeroAddress) throw new Error("Quote adapter funding separately");
-
 const logs = await client.getContractEvents({
   address: silo,
   abi: siloAbi,
@@ -32,16 +27,11 @@ const pairs = Array.from(tokens, sellToken => ({ silo, sellToken }));
 const results = await readOrderTermsBatch(client, { pairs, blockNumber });
 ```
 
-The adapter check, log query, and terms reads use the same block. The [SDK readers](/developers/sdk) report inventory already in the Silo. For a configured adapter, see [Funding and simulation](#funding-and-simulation).
-
 ## Quote, build, and simulate
 
-`terms.minimumBuyAmount` is the static floor. Quote against `terms.currentMinimumBuyAmount`, the output required for this sell token's full balance at the selected block. A full sale of this token can raise its required output before execution. Sales of other tokens do not change it.
-
-In this example you supply the `solver` functions. `quoteBuyAmount` returns a `bigint` in buy-token units, or `null` if there is no route.
+Quote each available pair for its full `sellAmount`. Skip it if the route cannot deliver `currentMinimumBuyAmount` to the recipient. In this example, `solver.quoteBuyAmount`, `solver.buildSettlement`, and `solver.simulate` are functions you supply. The quote returns a `bigint` in buy-token units, or `null` if there is no route.
 
 ```ts
-const executionWindow = 300;
 for (const [i, result] of results.entries()) {
   if (result.status === "error") {
     console.warn(pairs[i], result.error);
@@ -53,9 +43,9 @@ for (const [i, result] of results.entries()) {
   const buyAmount = await solver.quoteBuyAmount(terms);
   if (buyAmount === null || buyAmount < terms.currentMinimumBuyAmount) continue;
 
-  const { executionDeadline, validTo } = buildOrderDeadlines({
+  const { validTo } = buildOrderDeadlines({
     blockTimestamp: Number(terms.blockTimestamp),
-    executionWindow,
+    executionWindow: 300,
     auctionDuration: terms.auctionDuration,
   });
   const trade = buildJitTrade(terms, { buyAmount, validTo });
@@ -64,16 +54,18 @@ for (const [i, result] of results.entries()) {
 }
 ```
 
-The Silo can execute the order through `executionDeadline`. The CoW order's `validTo` adds the Silo's effective auction duration so Settlement retains the fill record until the auction reaches its floor. Check that your driver accepts this lifetime. Submit only while the Silo deadline still permits execution.
-
-Use `trade.jitOrder` and `trade.executedAmount` for the fill-or-kill trade. Include `trade.preInteraction` so Settlement calls `Silo.commit(order)` with the full order before signature verification. Include at most one active order per Silo and sell token in a batch. Only a full fill restarts that token's auction, even if another batch settles in the same block. No post-interaction is needed. All executed resource-token output goes to the configured recipient.
+When you build the settlement, use `jitOrder` and `executedAmount` for the fill-or-kill JIT trade. Include its `preInteraction` so Settlement calls `Silo.commit` before signature verification. Simulate the full settlement against current state before submission. If the balance or current minimum changed, read the terms again and get a new quote.
 
 ## Funding and simulation
 
-Track `FundingAdapterSet` for adapter changes and check `fundingAdapter()` at the quote block. If funding is enabled, read the Silo balance and expected adapter funding at that block. Use `buildOrder` with `sellAmount = siloBalance + expectedAdapterFunding`, even if the Silo balance alone is zero. Quote that combined amount against the live `currentMinimumBuyAmount(sellToken)` and use the same deadline calculation. Build the trade with `toSolverJitOrder(silo, order)` and its pre-interaction with `buildCommitInteraction(silo, order)`.
+If an adapter is configured, use `buildOrder` with `sellAmount = siloBalance + expectedAdapterFunding`. For `ApprovalFundingAdapter`, read `availableBalance(sellToken)`: the smaller of the source balance and allowance to the adapter. `IFundingAdapter` defines only `fund(token)` and has no mandatory quote method. Other adapters need their own funding estimate. The solver supplies no funding amount or arbitrary bytes to the adapter.
 
-For `ApprovalFundingAdapter`, `availableBalance(sellToken)` is the smaller of the source balance and its allowance to the adapter. Other adapters need their own estimate: `IFundingAdapter` requires only `fund(token)`. The solver supplies no funding amount or arbitrary bytes.
+`commit` attempts funding after caller, token, and positive-amount checks. It then requires the actual combined Silo balance to equal the order's sell amount. Source inventory, allowance, or adapter configuration changes can make this check revert. An outer transaction revert rolls back source transfers. `verify` before funding still checks only the current Silo balance, so it can reject an order that includes expected funding. Simulate the full settlement with the commit pre-interaction.
 
-Simulate the full settlement before submission. A standalone `verify(order)` checks the Silo balance without funding it. During `commit`, the Silo attempts funding with a 200,000 gas cap, ignores failure and return data, and requires the resulting balance to equal `sellAmount` exactly. Changes to balances, allowances, or adapter configuration can invalidate the order. Read fresh terms and get a new quote before retrying.
+The adapter call has a fixed 200,000 gas cap. Failure and return data are ignored. Adapters that need more gas can fail. The cap does not guarantee success when the outer transaction has too little gas. A prefunded fallback works only when the actual Silo balance still equals `sellAmount`.
 
-If the settlement reverts, source transfers also revert. A successful commit without a trade can leave source inventory in the Silo. It does not restart the auction.
+A valid commit does not enforce a later trade or signature validation. An authorized Settlement interaction can fund and commit a matching balance without a sale. A successful transaction can therefore leave source inventory in the Silo. Do not treat commitment as proof of conversion. All order, minimum-buy, and ERC-1271 checks still apply when the order is validated.
+
+Use `buildCommitInteractions` when a settlement contains several Silo orders. Use distinct sell tokens for orders from the same Silo. A later commit for the same token replaces the first.
+
+The SDK emits the current CoW solver JIT wire format. Your solver still controls the solution graph and interaction placement. An order can execute above its limit; all executed resource-token output goes to the configured recipient.

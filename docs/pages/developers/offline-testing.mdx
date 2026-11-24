@@ -1,22 +1,10 @@
 # Offline testing
 
-## Check the auction clock
+The fast test loop uses Foundry mocks. It tests the order hash, transient commitment, approval, and permanent invariants.
 
-With Foundry and the pinned dependencies installed, run this test from the repository root:
+Run `forge test --offline --match-path test/proofs/AuctionClock.t.sol` to check the auction clock against pinned CoW Settlement bytecode. This test does not run the driver.
 
-```sh
-forge test --offline --match-path test/proofs/AuctionClock.t.sol -vv
-```
-
-The test deploys the production `Silo` contract and the pinned CoW Settlement bytecode to a local EVM. It uses mock tokens and a test solver. It does not need an RPC endpoint or a running CoW driver.
-
-The fixture uses a two-hour auction with an initial output of 150 and a floor of 100. A full sale of token A restarts A at 150 in the same block; token B can still sell at 100. After ten minutes, A requires 146 because the contract rounds the drop down in the resource token's smallest unit. Repeated commits without fills do not move the sale time. A failed payout rolls back the fill and leaves the clock unchanged.
-
-The proof checks both deadlines. The Silo rejects the order after its execution deadline, even while CoW `validTo` is in the future. After `validTo`, the test clears the fill record in Settlement and sells new inventory at the floor. These tests do not check whether a driver accepts the chosen order lifetime.
-
-## Test with CoW services
-
-To test the solver integration, use the optional CoW Protocol Offline Playground. It runs a local chain, Settlement, Vault Relayer, orderbook, autopilot, driver, baseline solver, tokens, and test liquidity. Bootstrapping the pinned checkout requires network access. Starting the services requires Docker Compose.
+The optional offline profile uses the CoW Protocol Offline Playground. It starts Anvil, Settlement, Vault Relayer, orderbook, autopilot, driver, baseline solver, tokens, and test liquidity.
 
 ```sh
 ./integration/offline/manage.sh bootstrap
@@ -24,4 +12,6 @@ To test the solver integration, use the optional CoW Protocol Offline Playground
 ./integration/offline/manage.sh status
 ```
 
-The script stores the checkout in `.cache/cow-offline` by default. Use `./integration/offline/manage.sh down` to stop the services. Before relying on a particular auction duration, check the resulting wire lifetime with the driver version you plan to use.
+The profile pins an upstream commit. It stores the checkout in `.cache/`. The profile is not part of the default CI job because it builds the complete CoW service stack.
+
+Use this profile to validate settlement calldata and solver adapter changes. Use the official `cowprotocol/services` playground for changes that need the current production service code.
