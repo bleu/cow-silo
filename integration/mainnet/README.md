@@ -10,8 +10,6 @@ Install the root project dependencies and Foundry, then run from the repository 
 pnpm test:mainnet
 ```
 
-The default public RPC is `https://eth.drpc.org`. The default fork block is `26_399_049` (2026-11-12). This endpoint and block passed the fork tests with the deployed HooksTrampoline on 2026-11-25. The endpoint must provide historical code and storage for that block. Public RPC availability and rate limits can change.
-
 Override the endpoint or block explicitly:
 
 ```sh
