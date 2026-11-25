@@ -17,9 +17,9 @@ The Silo enforces these rules:
 - The token was prepared in the same transaction.
 - The order's sell amount equals the prepared balance and the current full balance.
 
-Preparation uses a separate transient balance snapshot for each token. Repeated preparation for the same token returns without funding again. Preparation permits any order that matches this snapshot and all order rules; it is no longer approval of one exact order hash. The slots clear at transaction end.
+Preparation uses a separate transient balance snapshot for each token. Repeated preparation for the same token returns without funding again. Preparation permits any order that matches this snapshot and all order rules. The slots clear at transaction end.
 
-`prepare` is permissionless. Any account can trigger optional funding into the fixed Silo without an order or a later trade. Caller restrictions do not protect source inventory from early funding because an authorized solver can also trigger funding without a trade. Source approvals must permit this transfer. Order hash, amount, recipient, and other policy checks still apply when an order is validated.
+`prepare` is permissionless. Any account can trigger optional funding into the fixed Silo without an order or a later trade. Source approvals must permit this transfer. Order hash, amount, recipient, and other policy checks still apply when an order is validated.
 
 ## Administrative control
 

@@ -40,7 +40,7 @@ The `mainnet` Foundry profile uses `integration/mainnet` as its test root. The d
 - An order below the minimum fails real ERC1271 validation and rolls back funding.
 - A late WETH payment failure rolls back funding, token transfers, allowances, fill state, and the transient preparation.
 
-The standard trade path calls `HooksTrampoline.execute` from Settlement with a `Silo.prepare(USDC)` pre-hook at the Silo's current `hookGasLimit`, initially 500,000. Separate tests cover a nondefault limit, a direct Settlement call, and preparation by an unrelated account. `prepare` is permissionless, and Silo has no trampoline configuration. The Silo checks the exact canonical appData hash and the prepared amount during real ERC1271 validation. The trampoline address comes from the upstream [deployment artifact](https://github.com/cowprotocol/hooks-trampoline/blob/main/cannon/deploy.json).
+The standard trade path calls `HooksTrampoline.execute` from Settlement with a `Silo.prepare(USDC)` pre-hook at the Silo's current `hookGasLimit`, initially 500,000. `prepare` is permissionless, and Silo has no trampoline configuration. The Silo checks the exact canonical appData hash and the prepared amount during real ERC1271 validation. The trampoline address comes from the upstream [deployment artifact](https://github.com/cowprotocol/hooks-trampoline/blob/main/cannon/deploy.json).
 
 Successful trades check token movement, preserved Settlement buffers, and Settlement's recorded filled amount. Rollback tests compare balances, allowances, fill state, and preparation before and after the failed call.
 

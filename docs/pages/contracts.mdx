@@ -37,7 +37,7 @@ Main functions:
 
 Preparation is token-scoped. The first successful call records a balance; further calls for the same token return without funding again. Signature validation requires the order amount to equal both this snapshot and the current full balance. Different tokens use separate transient slots. The slots clear at transaction end.
 
-The appData template contains one pre-hook targeting this Silo, with calldata for `prepare(sellToken)` and the current `hookGasLimit` as a decimal string. The limit defaults to 500,000. The Silo rebuilds and hashes the complete document. It accepts no arbitrary appData input. Changing the limit changes the expected hash for every sell token. See the exact JSON format in the [SDK reference](/developers/sdk).
+The appData template contains one pre-hook targeting this Silo, with calldata for `prepare(sellToken)` and the current `hookGasLimit` as a decimal string. The Silo rebuilds and hashes the complete document. It accepts no arbitrary appData input. Changing the limit changes the expected hash for every sell token. See the exact JSON format in the [SDK reference](/developers/sdk).
 
 ## Funding adapters
 
