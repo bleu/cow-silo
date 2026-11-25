@@ -5,6 +5,7 @@ import { IERC1271 } from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { IERC20 as OZIERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { Test } from "forge-std/Test.sol";
+import { stdStorage, StdStorage } from "forge-std/StdStorage.sol";
 import { IERC20 } from "cowprotocol/contracts/interfaces/IERC20.sol";
 import { GPv2Order } from "cowprotocol/contracts/libraries/GPv2Order.sol";
 
@@ -27,6 +28,7 @@ import {
 
 contract SiloTest is Test {
     using GPv2Order for GPv2Order.Data;
+    using stdStorage for StdStorage;
 
     bytes32 internal constant DOMAIN_SEPARATOR = keccak256("cow-silo:domain");
     uint256 internal constant MINIMUM_BUY_AMOUNT = 10;
@@ -60,6 +62,73 @@ contract SiloTest is Test {
         assertEq(silo.minimumBuyAmount(), MINIMUM_BUY_AMOUNT);
         assertEq(silo.domainSeparator(), DOMAIN_SEPARATOR);
         assertEq(silo.owner(), owner);
+    }
+
+    function testHookGasLimitDefaultsTo500000() public view {
+        assertEq(silo.hookGasLimit(), 500_000);
+        assertEq(silo.FUNDING_GAS_LIMIT(), 200_000);
+    }
+
+    function testOwnerCanSetHookGasLimit() public {
+        vm.expectEmit(false, false, false, true, address(silo));
+        emit ISilo.HookGasLimitSet(500_000, 600_000);
+        vm.prank(owner);
+        silo.setHookGasLimit(600_000);
+        assertEq(silo.hookGasLimit(), 600_000);
+        assertEq(silo.FUNDING_GAS_LIMIT(), 200_000);
+
+        vm.expectEmit(false, false, false, true, address(silo));
+        emit ISilo.HookGasLimitSet(600_000, 1);
+        vm.prank(owner);
+        silo.setHookGasLimit(1);
+        assertEq(silo.hookGasLimit(), 1);
+    }
+
+    function testFuzzOwnerCanSetAnyNonzeroHookGasLimit(uint256 newGasLimit) public {
+        newGasLimit = bound(newGasLimit, 1, type(uint256).max);
+        vm.prank(owner);
+        silo.setHookGasLimit(newGasLimit);
+        assertEq(silo.hookGasLimit(), newGasLimit);
+    }
+
+    function testSetHookGasLimitRejectsUnauthorizedCaller() public {
+        address caller = makeAddr("caller");
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, caller));
+        vm.prank(caller);
+        silo.setHookGasLimit(600_000);
+        assertEq(silo.hookGasLimit(), 500_000);
+    }
+
+    function testSetHookGasLimitRejectsZero() public {
+        vm.expectRevert(ISilo.InvalidHookGasLimit.selector);
+        vm.prank(owner);
+        silo.setHookGasLimit(0);
+        assertEq(silo.hookGasLimit(), 500_000);
+    }
+
+    function testHookGasLimitChangeRejectsOldDocumentAndRestoringLimitAcceptsIt() public {
+        collected.mint(address(silo), 100);
+        GPv2Order.Data memory oldOrder = validOrder(100, 20);
+        bytes32 oldDigest = oldOrder.hash(DOMAIN_SEPARATOR);
+        silo.prepare(OZIERC20(address(collected)));
+        assertEq(silo.isValidSignature(oldDigest, abi.encode(oldOrder)), IERC1271.isValidSignature.selector);
+
+        vm.prank(owner);
+        silo.setHookGasLimit(600_000);
+        assertNotEq(silo.appData(OZIERC20(address(collected))), oldOrder.appData);
+        vm.expectRevert(ISilo.InvalidAppData.selector);
+        silo.isValidSignature(oldDigest, abi.encode(oldOrder));
+
+        GPv2Order.Data memory newOrder = validOrder(100, 20);
+        (, bytes4 result) = settlement.prepareAndValidate(
+            silo, newOrder.hash(DOMAIN_SEPARATOR), OZIERC20(address(collected)), 100, abi.encode(newOrder)
+        );
+        assertEq(result, IERC1271.isValidSignature.selector);
+
+        vm.prank(owner);
+        silo.setHookGasLimit(500_000);
+        assertEq(silo.appData(OZIERC20(address(collected))), oldOrder.appData);
+        assertEq(silo.isValidSignature(oldDigest, abi.encode(oldOrder)), IERC1271.isValidSignature.selector);
     }
 
     function testOwnerCanSetFundingAdapter() public {
@@ -812,7 +881,9 @@ contract SiloTest is Test {
 
     function testHookOutOfGasLeavesTokenUnprepared() public {
         collected.mint(address(silo), 100);
-        settlement.prepare(silo, OZIERC20(address(collected)), 1_000);
+        vm.prank(owner);
+        silo.setHookGasLimit(1_000);
+        settlement.prepare(silo, OZIERC20(address(collected)), silo.hookGasLimit());
         assertEq(silo.preparedBalance(OZIERC20(address(collected))), 0);
         assertEq(collected.allowance(address(silo), vaultRelayer), 0);
         GPv2Order.Data memory order = validOrder(100, 20);
@@ -847,6 +918,9 @@ contract SiloTest is Test {
     function testCanonicalAppDataSharedVectors() public {
         address target = address(0xab);
         vm.etch(target, address(silo).code);
+        stdstore.target(target).sig("owner()").checked_write(owner);
+        vm.prank(owner);
+        Silo(target).setHookGasLimit(500_000);
         string memory document =
             '{"version":"1.3.0","metadata":{"hooks":{"pre":[{"target":"0x00000000000000000000000000000000000000ab","callData":"0xbabed18a00000000000000000000000000000000000000000000000000000000000000cd","gasLimit":"500000"}]}}}';
         bytes32 expected = 0xee2957f4feeb0e935ca682ff1afe936e7bdf5a06392ad586173f4116a9fcea76;
@@ -860,8 +934,28 @@ contract SiloTest is Test {
             Silo(target).appData(OZIERC20(address(0xef))),
             0x8ba2f9a5d77f6d1be2766857a0f1e2bfacb71269901694d10df84815e25778c2
         );
+        document =
+            '{"version":"1.3.0","metadata":{"hooks":{"pre":[{"target":"0x00000000000000000000000000000000000000ab","callData":"0xbabed18a00000000000000000000000000000000000000000000000000000000000000cd","gasLimit":"600000"}]}}}';
+        expected = 0xbc735adaef4c18f438c2d6baeefc621df188217f2bb6b606c9a2e4003ecd9436;
+        vm.prank(owner);
+        Silo(target).setHookGasLimit(600_000);
+        assertEq(keccak256(bytes(document)), expected);
+        assertEq(Silo(target).appData(OZIERC20(address(0xcd))), expected);
+
+        document =
+            '{"version":"1.3.0","metadata":{"hooks":{"pre":[{"target":"0x00000000000000000000000000000000000000ab","callData":"0xbabed18a00000000000000000000000000000000000000000000000000000000000000cd","gasLimit":"115792089237316195423570985008687907853269984665640564039457584007913129639935"}]}}}';
+        expected = 0x16c15ab419985a293ad2615b457d711f0ec01fbeaae6ddbac7dce3b15633feb5;
+        vm.prank(owner);
+        Silo(target).setHookGasLimit(type(uint256).max);
+        assertEq(Silo(target).hookGasLimit(), type(uint256).max);
+        assertEq(keccak256(bytes(document)), expected);
+        assertEq(Silo(target).appData(OZIERC20(address(0xcd))), expected);
+
         target = address(0x12);
         vm.etch(target, address(silo).code);
+        stdstore.target(target).sig("owner()").checked_write(owner);
+        vm.prank(owner);
+        Silo(target).setHookGasLimit(500_000);
         assertEq(
             Silo(target).appData(OZIERC20(address(0xcd))),
             0x7f64d7a41a78a56583d060d25b6c7d3bffa38035ce56c83bc69dd074c002de22

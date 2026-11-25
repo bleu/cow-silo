@@ -54,7 +54,7 @@ for (const [i, result] of results.entries()) {
 
 Use `jitOrder` and `executedAmount` for the fill-or-kill JIT trade. `appDataDocument` is the exact JSON whose hash is in `jitOrder.appData`. Publish those exact bytes through the CoW appData service before relying on hash lookup. Do not reformat the JSON. `preparationHook` is the document's pre-hook: execute it before signature validation, directly or through the CoW Hooks Trampoline.
 
-The SDK does not publish documents or build the outer trampoline call. Your settlement builder must preserve the hook's target, calldata, and 500,000-gas limit. `prepare` is permissionless and also accepts direct Settlement calls. The trampoline ignores failed hook calls, so simulate the full settlement, including signature validation. If the balance or floor changed, read the terms again and get a new quote.
+The SDK does not publish documents or build the outer trampoline call. Your settlement builder must preserve the hook's target, calldata, and gas limit from the snapshot. The default limit is 500,000; the owner can change it with `setHookGasLimit`. `prepare` is permissionless and also accepts direct Settlement calls. The trampoline ignores failed hook calls, so simulate the full settlement, including signature validation. If the balance, floor, or hook gas limit changed, read the terms again and get a new quote. A hook-gas change changes the appData hash for every sell token, so rebuild the order and publish its new exact document.
 
 ## Funding and simulation
 

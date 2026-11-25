@@ -22,6 +22,7 @@ Each `OrderTerms` snapshot contains:
 | --- | --- |
 | `silo`, `sellToken`, `buyToken`, `receiver` | Addresses. `buyToken` is the resource token and `receiver` is its configured recipient. |
 | `sellAmount`, `minimumBuyAmount` | Full sell balance and output floor, both `bigint` values in the respective token's smallest unit. |
+| `hookGasLimit` | Current appData pre-hook gas limit as a `bigint`, read at the same block as `appData`. |
 | `appData`, `domainSeparator` | The token-specific appData hash from `appData(sellToken)` and the Settlement domain separator. |
 | `blockNumber`, `blockTimestamp` | Snapshot block number and Unix time in seconds, both `bigint` values. |
 
@@ -41,19 +42,21 @@ Publish `appDataDocument` through the CoW appData service without changing its b
 | `encodeOrderPayload` | Raw ERC-1271 payload for `Silo.isValidSignature`. |
 | `encodeSolverSignature` | CoW solver API signature with the Silo owner prefix. |
 | `hashOrder` | CoW EIP-712 order digest from a Settlement domain separator. |
-| `buildPreparationHook` | Hook target, calldata for permissionless `prepare(sellToken)`, and fixed gas limit. |
-| `buildAppData` | Exact JSON document, its complete hash, and the preparation hook for a Silo/token pair. |
+| `buildPreparationHook(silo, sellToken, hookGasLimit)` | Hook target, calldata for permissionless `prepare(sellToken)`, and the supplied gas limit. Requires a nonzero uint256 `bigint`. |
+| `buildAppData(silo, sellToken, hookGasLimit)` | Exact JSON document, its complete hash, and the preparation hook for the supplied Silo, token, and gas limit. |
 | `toSolverJitOrder` | CoW solver API JIT order object. |
 
 ## Canonical appData
 
-The document uses this compact JSON shape, with no whitespace or trailing newline:
+The document uses this compact JSON shape, with no whitespace or trailing newline. This example shows the default gas limit; use the snapshot's `hookGasLimit` as a decimal string:
 
 ```json
 {"version":"1.3.0","metadata":{"hooks":{"pre":[{"target":"<lowercase Silo address>","callData":"<lowercase prepare(sellToken) calldata>","gasLimit":"500000"}]}}}
 ```
 
-`buildAppData` fills these values and hashes the UTF-8 bytes. The Silo rebuilds the same prefix, calldata hex, and suffix. The target has 20 bytes and calldata has 36 bytes, each with a `0x` prefix and leading zeroes preserved. The hook budget covers preparation, including the separate 200,000-gas adapter cap. Do not add metadata, change key order, or add hooks to an accepted document.
+`buildAppData` fills these values and hashes the UTF-8 bytes. The Silo rebuilds the same document with the current hook gas limit. The target has 20 bytes and calldata has 36 bytes, each with a `0x` prefix and leading zeroes preserved. The hook budget must cover preparation, including the separate 200,000-gas adapter cap. Do not add metadata, change key order, or add hooks to an accepted document.
+
+`buildJitTrade` uses `terms.hookGasLimit`; lower-level builders require an explicit `bigint` value. Do not convert it through a JavaScript `number`. When the owner changes the limit, read a new snapshot, rebuild the order, and publish the new exact document. The old document is rejected while the configured limit differs. Restoring the old limit can make the old document valid again, subject to the other order checks.
 
 ## Funding adapter ABI
 

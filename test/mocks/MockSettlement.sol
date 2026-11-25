@@ -28,7 +28,7 @@ contract MockSettlement is ISettlement {
         uint256 sellAmount,
         bytes calldata signature
     ) external returns (bool observedPreparation, bytes4 result) {
-        prepare(silo, sellToken, 500_000);
+        prepare(silo, sellToken, silo.hookGasLimit());
         observedPreparation = silo.preparedBalance(sellToken) == sellAmount;
         result = silo.isValidSignature(digest, signature);
     }
@@ -41,8 +41,8 @@ contract MockSettlement is ISettlement {
         uint256[2] calldata sellAmounts,
         bytes[2] calldata signatures
     ) external returns (bool[2] memory observedPreparations, bytes4[2] memory results) {
-        prepare(silo, sellTokens[0], 500_000);
-        prepare(silo, sellTokens[1], 500_000);
+        prepare(silo, sellTokens[0], silo.hookGasLimit());
+        prepare(silo, sellTokens[1], silo.hookGasLimit());
 
         observedPreparations[0] = silo.preparedBalance(sellTokens[0]) == sellAmounts[0];
         observedPreparations[1] = silo.preparedBalance(sellTokens[1]) == sellAmounts[1];

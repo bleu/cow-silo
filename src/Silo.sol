@@ -33,6 +33,7 @@ contract Silo is ISilo, Ownable2Step {
     bytes32 public immutable override domainSeparator;
     uint256 public override minimumBuyAmount;
     IFundingAdapter public override fundingAdapter;
+    uint256 public override hookGasLimit = 500_000;
 
     constructor(
         ISettlement settlement_,
@@ -74,6 +75,15 @@ contract Silo is ISilo, Ownable2Step {
         uint256 previousAmount = minimumBuyAmount;
         minimumBuyAmount = newMinimumBuyAmount;
         emit MinimumBuyAmountSet(previousAmount, newMinimumBuyAmount);
+    }
+
+    /// @inheritdoc ISilo
+    function setHookGasLimit(uint256 newGasLimit) external override onlyOwner {
+        if (newGasLimit == 0) revert InvalidHookGasLimit();
+
+        uint256 previousGasLimit = hookGasLimit;
+        hookGasLimit = newGasLimit;
+        emit HookGasLimitSet(previousGasLimit, newGasLimit);
     }
 
     /// @inheritdoc ISilo
@@ -156,7 +166,9 @@ contract Silo is ISilo, Ownable2Step {
                 '","callData":"',
                 Strings.toHexString(uint32(ISilo.prepare.selector), 4),
                 _addressWord(sellToken),
-                '","gasLimit":"500000"}]}}}'
+                '","gasLimit":"',
+                Strings.toString(hookGasLimit),
+                '"}]}}}'
             )
         );
     }

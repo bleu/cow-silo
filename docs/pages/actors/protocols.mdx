@@ -17,7 +17,7 @@ Silo can convert many fee tokens into one treasury token. The protocol does not 
 
 Do not send the resource token to the Silo. The Silo cannot sell its resource token.
 
-The appData document is fixed for each Silo/sell-token pair. It tells solvers to execute the permissionless `prepare(sellToken)` pre-hook before signature validation. Use the SDK to get the exact document and hash for publication; the owner does not approve a generic appData hash.
+The appData document is fixed for each Silo/sell-token pair at the current hook gas limit. It tells solvers to execute the permissionless `prepare(sellToken)` pre-hook before signature validation. Use the SDK to get the exact document and hash for publication; the owner does not approve a generic appData hash.
 
 ## Optional source funding
 
@@ -28,6 +28,12 @@ Only the fixed Silo can call the adapter's `fund(token)`. It transfers `min(sour
 The owner can replace the adapter or disable it with `setFundingAdapter(address(0))`. This does not revoke source allowances. Revoke the old adapter's allowances separately. A protocol-specific adapter must use the protocol's existing permissions; configuring an adapter does not grant a privileged withdrawal bypass.
 
 Solvers must use the current Silo balance plus expected adapter funding as the sell amount. Changes to inventory, allowances, or adapter configuration can invalidate that amount. The Silo attempts funding with a fixed 200,000 gas cap and ignores failure. An adapter that needs more gas can fail; any fallback prefunded balance must still match the order amount exactly. An outer transaction revert also rolls back the source transfer.
+
+## Hook gas limit
+
+The owner can call `setHookGasLimit` to change the pre-hook gas limit from its default of 500,000. Zero is rejected. Choose a limit that covers preparation and optional funding, then simulate the complete settlement. A low limit can make the hook fail; a very large limit can exceed available transaction gas. The adapter's separate 200,000-gas cap does not change.
+
+A limit update changes the expected appData hash for every sell token. Solvers must rebuild affected orders and publish the new exact documents. Restoring a previous limit can make its documents valid again, subject to the other order checks.
 
 ## Minimum buy amount
 

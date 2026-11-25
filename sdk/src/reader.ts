@@ -8,6 +8,7 @@ export type OrderTerms = SiloPair & {
   receiver: Address;
   sellAmount: bigint;
   minimumBuyAmount: bigint;
+  hookGasLimit: bigint;
   appData: Hex;
   domainSeparator: Hex;
   blockNumber: bigint;
@@ -20,7 +21,7 @@ export type OrderTermsResult =
   | { status: "error"; error: Error };
 
 type ReaderClient = Pick<PublicClient, "getBlock" | "multicall">;
-type SiloField = "resourceToken" | "resourceRecipient" | "domainSeparator" | "minimumBuyAmount";
+type SiloField = "resourceToken" | "resourceRecipient" | "domainSeparator" | "minimumBuyAmount" | "hookGasLimit";
 type ReadCall =
   | { address: Address; abi: typeof siloAbi; functionName: SiloField }
   | { address: Address; abi: typeof siloAbi; functionName: "appData"; args: readonly [Address] }
@@ -54,6 +55,7 @@ export async function readOrderTermsBatch(
       appData: enqueue({ address: silo, abi: siloAbi, functionName: "appData", args: [sellToken] }),
       domainSeparator: field("domainSeparator"),
       minimumBuyAmount: field("minimumBuyAmount"),
+      hookGasLimit: field("hookGasLimit"),
       sellAmount: enqueue({ address: sellToken, abi: erc20Abi, functionName: "balanceOf", args: [silo] }),
     };
   });
@@ -90,6 +92,7 @@ export async function readOrderTermsBatch(
         appData: hexAt(row.appData),
         domainSeparator: hexAt(row.domainSeparator),
         minimumBuyAmount: amountAt(row.minimumBuyAmount),
+        hookGasLimit: amountAt(row.hookGasLimit),
         sellAmount: amountAt(row.sellAmount),
         blockNumber: block.number,
         blockTimestamp: block.timestamp,

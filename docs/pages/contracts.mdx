@@ -2,18 +2,19 @@
 
 ## Silo
 
-`Silo` is an ERC-1271 order owner. Most order rules are immutable. A two-step owner can change the minimum buy amount and funding adapter.
+`Silo` is an ERC-1271 order owner. Most order rules are immutable. A two-step owner can change the minimum buy amount, hook gas limit, and funding adapter.
 
 Permanent values:
 
 - CoW Settlement contract and its EIP-712 domain separator.
 - CoW Vault Relayer.
 - Resource token and recipient.
-- AppData JSON template and hook gas limit.
+- AppData JSON shape and hook target.
 
 Managed values:
 
 - Minimum buy amount, denominated in the resource token's smallest unit.
+- Hook gas limit, initially 500,000. Zero is not valid.
 - Funding adapter, initially the zero address. The owner can replace it or set it to zero to disable funding.
 
 The owner cannot change the permanent values or transfer tokens from the Silo.
@@ -23,6 +24,8 @@ Main functions:
 | Function | Caller | Result |
 | --- | --- | --- |
 | `setMinimumBuyAmount(amount)` | Owner only | Changes the resource-denominated execution floor. Zero is not valid. |
+| `setHookGasLimit(gasLimit)` | Owner only | Changes the appData pre-hook gas limit. Zero is not valid. Emits `HookGasLimitSet`. |
+| `hookGasLimit()` | Any account | Returns the current pre-hook gas limit. |
 | `setFundingAdapter(adapter)` | Owner only | Replaces or disables the funding adapter. Emits `FundingAdapterSet`. |
 | `fundingAdapter()` | Any account | Returns the current adapter, or zero when disabled. |
 | `FUNDING_GAS_LIMIT()` | Any account | Returns the fixed adapter call gas cap of 200,000. |
@@ -34,7 +37,7 @@ Main functions:
 
 Preparation is token-scoped. The first successful call records a balance; further calls for the same token return without funding again. Signature validation requires the order amount to equal both this snapshot and the current full balance. Different tokens use separate transient slots. The slots clear at transaction end.
 
-The appData template contains one pre-hook targeting this Silo, with calldata for `prepare(sellToken)` and a fixed 500,000-gas limit. The Silo hashes the fixed prefix, expected calldata hex, and fixed suffix. It accepts no arbitrary appData input. See the exact JSON format in the [SDK reference](/developers/sdk).
+The appData template contains one pre-hook targeting this Silo, with calldata for `prepare(sellToken)` and the current `hookGasLimit` as a decimal string. The limit defaults to 500,000. The Silo rebuilds and hashes the complete document. It accepts no arbitrary appData input. Changing the limit changes the expected hash for every sell token. See the exact JSON format in the [SDK reference](/developers/sdk).
 
 ## Funding adapters
 

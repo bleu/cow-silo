@@ -84,6 +84,40 @@ contract SiloSettlementTest is Test {
         assertEq(SETTLEMENT.filledAmount(_uid(order)), SELL_AMOUNT);
     }
 
+    function testNondefaultHookGasLimitFundsAndSettlesOrder() public {
+        silo.setHookGasLimit(600_000);
+        uint256 sourceBefore = USDC.balanceOf(treasury);
+        uint256 recipientBefore = WETH.balanceOf(recipient);
+        GPv2Order.Data memory order = _order(SELL_AMOUNT, BUY_AMOUNT);
+
+        _settle(order);
+
+        assertEq(USDC.balanceOf(treasury), sourceBefore - SELL_AMOUNT);
+        assertEq(USDC.balanceOf(address(silo)), 0);
+        assertEq(WETH.balanceOf(recipient), recipientBefore + BUY_AMOUNT);
+        assertEq(SETTLEMENT.filledAmount(_uid(order)), SELL_AMOUNT);
+    }
+
+    function testHookGasLimitChangeRejectsStaleDocumentAndRestoringLimitSettles() public {
+        GPv2Order.Data memory order = _order(SELL_AMOUNT, BUY_AMOUNT);
+        bytes memory stateBefore = _tradeState(order);
+        silo.setHookGasLimit(600_000);
+
+        _settle(order, abi.encodeWithSelector(ISilo.InvalidAppData.selector));
+
+        assertEq(_tradeState(order), stateBefore, "Stale appData must roll back all trade state");
+        assertEq(silo.preparedBalance(USDC), 0);
+        silo.setHookGasLimit(500_000);
+        assertEq(silo.appData(USDC), order.appData);
+        uint256 recipientBefore = WETH.balanceOf(recipient);
+
+        _settle(order);
+
+        assertEq(USDC.balanceOf(address(silo)), 0);
+        assertEq(WETH.balanceOf(recipient), recipientBefore + BUY_AMOUNT);
+        assertEq(SETTLEMENT.filledAmount(_uid(order)), SELL_AMOUNT);
+    }
+
     function testUnrelatedAccountCanPrepareFundingBeforeStandardSettlement() public {
         address caller = makeAddr("caller");
         uint256 sourceBefore = USDC.balanceOf(treasury);
@@ -303,7 +337,7 @@ contract SiloSettlementTest is Test {
         interactions[0] = new IMainnetSettlement.Interaction[](1);
         if (useTrampoline) {
             IHooksTrampoline.Hook[] memory hooks = new IHooksTrampoline.Hook[](1);
-            hooks[0] = IHooksTrampoline.Hook(address(silo), abi.encodeCall(ISilo.prepare, (USDC)), 500_000);
+            hooks[0] = IHooksTrampoline.Hook(address(silo), abi.encodeCall(ISilo.prepare, (USDC)), silo.hookGasLimit());
             interactions[0][0] = IMainnetSettlement.Interaction({
                 target: address(TRAMPOLINE), value: 0, callData: abi.encodeCall(IHooksTrampoline.execute, (hooks))
             });

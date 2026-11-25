@@ -17,7 +17,7 @@ Use the Foundry scripts in `script/`. The scripts read `.env` values. They suppo
 
 Deploy the Burner before the Silo when the output must leave circulation. Set the Burner address as `RESOURCE_RECIPIENT`.
 
-Set `MINIMUM_BUY_AMOUNT` to a non-zero value. Transfer ownership to the protocol through `transferOwnership`; the protocol must call `acceptOwnership`. Ownership controls the minimum buy amount and funding adapter.
+Set `MINIMUM_BUY_AMOUNT` to a non-zero value. Transfer ownership to the protocol through `transferOwnership`; the protocol must call `acceptOwnership`. Ownership controls the minimum buy amount, hook gas limit, and funding adapter. The hook limit starts at 500,000; the owner can change it after deployment with `setHookGasLimit`. Publish appData documents only after selecting the limit. Later limit changes require new documents and order hashes.
 
 Set `SETTLEMENT` before deploying the factory. No trampoline configuration is needed. The Silo no longer takes an appData hash. Funding starts disabled. For optional source funding, deploy `ApprovalFundingAdapter(source, silo)` after the Silo, then have the Silo owner call `setFundingAdapter(adapter)`. The source must approve the adapter as the sell-token spender. Neither the Silo nor the Vault Relayer spends directly from the source. Record the adapter and source addresses with the deployment configuration.
 
@@ -25,6 +25,6 @@ Recompute CREATE2 predictions with the new Silo creation code. The same inputs a
 
 ## Record
 
-Add verified addresses to `deployments/addresses.json`. Add the chain, factory, Silo, owner, Burner, Settlement, resource token, recipient, minimum buy amount, transaction hash, and source commit. Record published appData hashes by Silo and sell token; there is no single hash per Silo.
+Add verified addresses to `deployments/addresses.json`. Add the chain, factory, Silo, owner, Burner, Settlement, resource token, recipient, minimum buy amount, hook gas limit, transaction hash, and source commit. Record published appData hashes by Silo and sell token; there is no single hash per Silo.
 
 Do not label a deployment as official before an audit and the CoW integration review.

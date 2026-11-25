@@ -1,4 +1,4 @@
-import { decodeAbiParameters, decodeFunctionData, getAddress, keccak256, parseAbiParameters, size, stringToHex } from "viem";
+import { decodeAbiParameters, decodeFunctionData, getAddress, keccak256, maxUint256, parseAbiParameters, size, stringToHex } from "viem";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -60,7 +60,7 @@ describe("canonical appData", () => {
   ] as const;
 
   it.each(vectors)("matches exact JSON, calldata, and hash for $silo / $sellToken", (vector) => {
-    const result = buildAppData(vector.silo, vector.sellToken);
+    const result = buildAppData(vector.silo, vector.sellToken, 500_000n);
     expect(result).toEqual({
       document: vector.document,
       hash: vector.hash,
@@ -71,9 +71,37 @@ describe("canonical appData", () => {
     expect(keccak256(stringToHex(vector.document))).toBe(vector.hash);
   });
 
+  it.each([
+    { hookGasLimit: 600_000n, decimal: "600000", hash: "0xbc735adaef4c18f438c2d6baeefc621df188217f2bb6b606c9a2e4003ecd9436" },
+    {
+      hookGasLimit: maxUint256,
+      decimal: "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+      hash: "0x16c15ab419985a293ad2615b457d711f0ec01fbeaae6ddbac7dce3b15633feb5",
+    },
+  ])("matches the variable gas vector for $decimal", ({ hookGasLimit, decimal, hash }) => {
+    const vector = vectors[0];
+    const result = buildAppData(vector.silo, vector.sellToken, hookGasLimit);
+    expect(result).toEqual({
+      document: vector.document.replace('"500000"', `"${decimal}"`),
+      hash,
+      hook: { target: vector.silo, callData: vector.callData, gasLimit: decimal },
+    });
+    expect(result.hash).not.toBe(vector.hash);
+    expect(buildPreparationHook(vector.silo, vector.sellToken, hookGasLimit)).toEqual(result.hook);
+  });
+
+  it("accepts the smallest nonzero gas limit", () => {
+    expect(buildPreparationHook(silo, sellToken, 1n).gasLimit).toBe("1");
+  });
+
+  it.each([0n, -1n, maxUint256 + 1n])("rejects an invalid hook gas limit of %s", (hookGasLimit) => {
+    expect(() => buildPreparationHook(silo, sellToken, hookGasLimit)).toThrow("hookGasLimit must be a nonzero uint256");
+    expect(() => buildAppData(silo, sellToken, hookGasLimit)).toThrow("hookGasLimit must be a nonzero uint256");
+  });
+
   it("normalizes checksummed addresses to lowercase", () => {
     const { silo, sellToken } = vectors[0];
-    expect(buildAppData(getAddress(silo), getAddress(sellToken))).toEqual(buildAppData(silo, sellToken));
+    expect(buildAppData(getAddress(silo), getAddress(sellToken), 500_000n)).toEqual(buildAppData(silo, sellToken, 500_000n));
   });
 
   it("binds the hash to every JSON byte", () => {
@@ -129,7 +157,7 @@ describe("Silo SDK", () => {
   });
 
   it("builds a token-scoped preparation hook", () => {
-    const hook = buildPreparationHook(silo, sellToken);
+    const hook = buildPreparationHook(silo, sellToken, 500_000n);
     expect(hook.target).toBe(silo);
     expect(hook.gasLimit).toBe("500000");
     expect(decodeFunctionData({ abi: siloAbi, data: hook.callData })).toEqual({

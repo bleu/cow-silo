@@ -3,6 +3,7 @@ import {
   encodeAbiParameters,
   encodeFunctionData,
   keccak256,
+  maxUint256,
   parseAbiParameters,
   stringToHex,
   type Address,
@@ -54,7 +55,7 @@ export type SolverJitOrder = {
 export type PreparationHook = {
   target: Address;
   callData: Hex;
-  gasLimit: "500000";
+  gasLimit: string;
 };
 
 export const ORDER_TYPE_HASH =
@@ -81,7 +82,7 @@ export function buildJitTrade(terms: OrderTerms, limit: { buyAmount: bigint; val
     throw new Error("validTo must be within five minutes of the observed block");
   }
 
-  const appData = buildAppData(terms.silo, terms.sellToken);
+  const appData = buildAppData(terms.silo, terms.sellToken, terms.hookGasLimit);
   if (appData.hash !== terms.appData.toLowerCase()) {
     throw new Error("appData must match the canonical preparation hook document");
   }
@@ -171,7 +172,10 @@ export function hashOrder(order: SiloOrder, domainSeparator: Hex): Hex {
 }
 
 /** Anyone can invoke the hook directly or through the standard CoW trampoline. */
-export function buildPreparationHook(silo: Address, sellToken: Address): PreparationHook {
+export function buildPreparationHook(silo: Address, sellToken: Address, hookGasLimit: bigint): PreparationHook {
+  if (hookGasLimit <= 0n || hookGasLimit > maxUint256) {
+    throw new Error("hookGasLimit must be a nonzero uint256");
+  }
   return {
     target: silo.toLowerCase() as Address,
     callData: encodeFunctionData({
@@ -179,12 +183,12 @@ export function buildPreparationHook(silo: Address, sellToken: Address): Prepara
       functionName: "prepare",
       args: [sellToken],
     }).toLowerCase() as Hex,
-    gasLimit: "500000",
+    gasLimit: hookGasLimit.toString(),
   };
 }
 
-export function buildAppData(silo: Address, sellToken: Address) {
-  const hook = buildPreparationHook(silo, sellToken);
+export function buildAppData(silo: Address, sellToken: Address, hookGasLimit: bigint) {
+  const hook = buildPreparationHook(silo, sellToken, hookGasLimit);
   const document = JSON.stringify({ version: "1.3.0", metadata: { hooks: { pre: [hook] } } });
   return { document, hash: keccak256(stringToHex(document)), hook };
 }

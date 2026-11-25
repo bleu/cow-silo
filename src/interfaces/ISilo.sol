@@ -18,6 +18,9 @@ interface ISilo is IERC1271 {
     /// @notice Emitted after the owner changes the resource-token output floor.
     event MinimumBuyAmountSet(uint256 previousAmount, uint256 newAmount);
 
+    /// @notice Emitted after the owner changes the appData preparation-hook gas limit.
+    event HookGasLimitSet(uint256 previousGasLimit, uint256 newGasLimit);
+
     /// @notice Emitted after the first successful preparation of a token in this transaction.
     event TokenPrepared(address indexed sellToken, uint256 sellAmount);
 
@@ -32,6 +35,7 @@ interface ISilo is IERC1271 {
     error InvalidBuyToken();
     error InvalidPreparation();
     error InvalidFee();
+    error InvalidHookGasLimit();
     error InvalidKind();
     error InvalidMinimumBuyAmount();
     error InvalidOrderHash();
@@ -51,6 +55,7 @@ interface ISilo is IERC1271 {
     function domainSeparator() external view returns (bytes32);
     function minimumBuyAmount() external view returns (uint256);
     function fundingAdapter() external view returns (IFundingAdapter);
+    function hookGasLimit() external view returns (uint256);
 
     /// @notice Replaces the funding adapter, or disables funding with the zero address.
     function setFundingAdapter(IFundingAdapter newAdapter) external;
@@ -58,6 +63,10 @@ interface ISilo is IERC1271 {
     /// @notice Changes the minimum resource-token output for every Silo order.
     /// @param newMinimumBuyAmount The new output floor in the resource token's smallest unit.
     function setMinimumBuyAmount(uint256 newMinimumBuyAmount) external;
+
+    /// @notice Changes the preparation-hook gas limit in the expected appData document.
+    /// @dev Rejects zero. Restoring a prior limit can make its document valid again.
+    function setHookGasLimit(uint256 newGasLimit) external;
 
     /// @notice Funds, approves, and snapshots a sell token once per transaction.
     /// @dev Anyone can trigger funding into this Silo; order validation still applies.

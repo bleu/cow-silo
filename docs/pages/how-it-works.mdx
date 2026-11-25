@@ -20,7 +20,7 @@ CoW Protocol scores competing settlements. A higher execution value improves the
 
 ## AppData
 
-Each order uses a fixed JSON document with one pre-hook: `Silo.prepare(sellToken)`. The target is the Silo and the hook gas limit is 500,000. Only the hex-encoded calldata changes with the sell token. The Silo joins its fixed prefix, expected calldata hex, and fixed suffix, then checks the complete document hash against the order's `appData`.
+Each order uses a fixed JSON shape with one pre-hook: `Silo.prepare(sellToken)`. The target is the Silo. The hook gas limit is the current `hookGasLimit`, initially 500,000, which the owner can change. The Silo inserts the expected calldata hex and current decimal gas limit into the template, then checks the complete document hash against the order's `appData`. Changing the limit changes the expected hash for every sell token, so solvers must rebuild orders and publish the new documents.
 
 The SDK returns the exact document for publication to the CoW appData service. Solvers need that document to read the hook; its hash alone contains no readable hook instruction. Extra hooks, different metadata, or different JSON bytes produce a hash the Silo does not accept.
 
