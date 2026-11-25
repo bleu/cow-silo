@@ -18,20 +18,19 @@ interface ISilo is IERC1271 {
     /// @notice Emitted after the owner changes the resource-token output floor.
     event MinimumBuyAmountSet(uint256 previousAmount, uint256 newAmount);
 
-    /// @notice Emitted after the Settlement contract commits an order for validation.
-    event OrderCommitted(bytes32 indexed orderHash, address indexed sellToken, uint256 sellAmount);
+    /// @notice Emitted after the first successful preparation of a token in this transaction.
+    event TokenPrepared(address indexed sellToken, uint256 sellAmount);
 
     /// @notice Emitted after the Silo approves the Vault Relayer for a sell token.
     event TokenApproved(address indexed token, address indexed spender);
 
     error BalanceChanged(uint256 expected, uint256 actual);
     error BuyAmountBelowMinimum(uint256 buyAmount, uint256 minimumBuyAmount);
-    error CommitOutsideSettlement();
     error EmptyBalance();
     error InvalidAppData();
     error InvalidBalanceType();
     error InvalidBuyToken();
-    error InvalidCommitment();
+    error InvalidPreparation();
     error InvalidFee();
     error InvalidKind();
     error InvalidMinimumBuyAmount();
@@ -48,7 +47,7 @@ interface ISilo is IERC1271 {
     function vaultRelayer() external view returns (address);
     function resourceToken() external view returns (CoWIERC20);
     function resourceRecipient() external view returns (address);
-    function appData() external view returns (bytes32);
+    function appData(IERC20 sellToken) external view returns (bytes32);
     function domainSeparator() external view returns (bytes32);
     function minimumBuyAmount() external view returns (uint256);
     function fundingAdapter() external view returns (IFundingAdapter);
@@ -60,17 +59,14 @@ interface ISilo is IERC1271 {
     /// @param newMinimumBuyAmount The new output floor in the resource token's smallest unit.
     function setMinimumBuyAmount(uint256 newMinimumBuyAmount) external;
 
-    /// @notice Commits an exact order hash during a Settlement transaction.
-    /// @dev The Settlement contract must call this function as an order pre-interaction.
-    /// @param orderHash The EIP-712 hash of the order to authorize.
-    /// @param sellToken The token sold by the order.
-    /// @param sellAmount The complete Silo balance of the sell token after optional funding.
-    function commit(bytes32 orderHash, IERC20 sellToken, uint256 sellAmount) external;
+    /// @notice Funds, approves, and snapshots a sell token once per transaction.
+    /// @dev Anyone can trigger funding into this Silo; order validation still applies.
+    function prepare(IERC20 sellToken) external;
 
     /// @notice Reverts unless an order satisfies every Silo policy.
     /// @param order The decoded CoW Protocol order.
     function verify(GPv2Order.Data memory order) external view;
 
-    /// @notice Reports whether an order hash was committed in the current transaction.
-    function isCommitted(bytes32 orderHash) external view returns (bool);
+    /// @notice Returns the first prepared balance, or zero outside its transaction.
+    function preparedBalance(IERC20 sellToken) external view returns (uint256);
 }

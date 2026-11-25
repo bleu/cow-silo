@@ -7,6 +7,7 @@ git submodule update --init --recursive
 pnpm install --frozen-lockfile
 forge fmt --check
 forge test
+TEST_ISOLATED=true forge test --isolate --match-test testPreparationExpiresAfterTransaction
 pnpm --filter @cow-silo/sdk typecheck
 pnpm --filter @cow-silo/sdk test
 pnpm --filter @cow-silo/docs build

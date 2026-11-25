@@ -14,7 +14,8 @@ import { mainnet } from "viem/chains";
 import { describe, expect, it } from "vitest";
 
 import {
-  buildCommitInteraction,
+  buildAppData,
+  buildPreparationHook,
   buildJitTrade,
   buildOrder,
   readOrderTerms,
@@ -26,7 +27,7 @@ const silo = "0x1111111111111111111111111111111111111111";
 const sellToken = "0x2222222222222222222222222222222222222222";
 const buyToken = "0x3333333333333333333333333333333333333333";
 const receiver = "0x4444444444444444444444444444444444444444";
-const appData = `0x${"55".repeat(32)}` as const;
+const appData = buildAppData(silo, sellToken).hash;
 const domainSeparator = `0x${"66".repeat(32)}` as const;
 const blockNumber = 20_000_000n;
 const blockTimestamp = 1_900_000_000n;
@@ -44,7 +45,7 @@ const readAbi = parseAbi([
   "function resourceToken() view returns (address)",
   "function resourceRecipient() view returns (address)",
   "function minimumBuyAmount() view returns (uint256)",
-  "function appData() view returns (bytes32)",
+  "function appData(address) view returns (bytes32)",
   "function domainSeparator() view returns (bytes32)",
 ]);
 
@@ -80,7 +81,7 @@ function testChain({ balances = {}, floors = {} }: { balances?: ReadValues; floo
             resourceToken: buyToken,
             resourceRecipient: receiver,
             minimumBuyAmount: floors[target] ?? (number === blockNumber ? 10n : 14n),
-            appData,
+            appData: buildAppData(target, args?.[0] ?? sellToken).hash,
             domainSeparator,
             balanceOf: balances[target] ?? (number === blockNumber ? 100n : 73n),
           } as const;
@@ -133,18 +134,21 @@ describe("readOrderTermsBatch", () => {
     const pairs = [{ silo, sellToken: otherToken }, { silo: otherSilo, sellToken }, pair, pair] as const;
     const result = await readOrderTermsBatch(client, { pairs, blockNumber });
     expect(result).toEqual([
-      { status: "available", terms: { ...terms, sellToken: otherToken, sellAmount: 35n } },
-      { status: "available", terms: { ...terms, silo: otherSilo, minimumBuyAmount: 8n } },
+      { status: "available", terms: { ...terms, sellToken: otherToken, sellAmount: 35n, appData: buildAppData(silo, otherToken).hash } },
+      { status: "available", terms: { ...terms, silo: otherSilo, minimumBuyAmount: 8n, appData: buildAppData(otherSilo, sellToken).hash } },
       { status: "available", terms },
       { status: "available", terms },
     ]);
     expect(blocks).toEqual([numberToHex(blockNumber)]);
     expect(new Set(reads.map(({ block }) => block))).toEqual(new Set([numberToHex(blockNumber)]));
     for (const address of [silo, otherSilo]) {
-      expect(reads.filter(({ target }) => target === address).map(({ getter }) => getter).sort()).toEqual([
-        "appData", "domainSeparator", "minimumBuyAmount", "resourceRecipient", "resourceToken",
+      expect(reads.filter(({ target, getter }) => target === address && getter !== "appData").map(({ getter }) => getter).sort()).toEqual([
+        "domainSeparator", "minimumBuyAmount", "resourceRecipient", "resourceToken",
       ]);
     }
+    const appDataReads = reads.filter(({ getter }) => getter === "appData").map(({ target, owner }) => [target, owner]);
+    expect(appDataReads).toHaveLength(3);
+    expect(appDataReads).toEqual(expect.arrayContaining([[silo, otherToken], [otherSilo, sellToken], [silo, sellToken]]));
     const balances = reads.filter(({ getter }) => getter === "balanceOf").map(({ target, owner }) => [target, owner]);
     expect(balances).toHaveLength(3);
     expect(balances).toEqual(expect.arrayContaining([[otherToken, silo], [sellToken, otherSilo], [sellToken, silo]]));
@@ -169,7 +173,7 @@ describe("readOrderTermsBatch", () => {
 });
 
 describe("buildJitTrade", () => {
-  it("produces the same JIT order and commit pre-interaction as the existing builders", () => {
+  it("returns the publication document and its preparation hook with the JIT order", () => {
     const limit = { buyAmount: 25n, validTo: Number(blockTimestamp) + 120 };
     const order = buildOrder({
       sellToken, resourceToken: buyToken, resourceRecipient: receiver, sellAmount: 100n,
@@ -178,8 +182,14 @@ describe("buildJitTrade", () => {
     expect(buildJitTrade(terms, limit)).toEqual({
       jitOrder: toSolverJitOrder(silo, order),
       executedAmount: "100",
-      preInteraction: buildCommitInteraction(silo, order, domainSeparator),
+      appDataDocument: buildAppData(silo, sellToken).document,
+      preparationHook: buildPreparationHook(silo, sellToken),
     });
+  });
+
+  it("rejects an appData hash for a different pair", () => {
+    const wrongTerms = { ...terms, appData: buildAppData(silo, otherToken).hash };
+    expect(() => buildJitTrade(wrongTerms, { buyAmount: 10n, validTo: Number(blockTimestamp) })).toThrow("appData must match");
   });
 
   it("accepts both ends of the five-minute validity window for the observed block", () => {

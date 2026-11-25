@@ -15,11 +15,10 @@ contract DeploySilo is Script {
         IERC20 resourceToken = IERC20(vm.envAddress("RESOURCE_TOKEN"));
         address resourceRecipient = vm.envAddress("RESOURCE_RECIPIENT");
         uint256 minimumBuyAmount = vm.envUint("MINIMUM_BUY_AMOUNT");
-        bytes32 appData = vm.envBytes32("APP_DATA");
         bytes32 userSalt = vm.envOr("USER_SALT", bytes32(0));
 
         vm.startBroadcast(privateKey);
-        ISilo deployedSilo = factory.createSilo(resourceToken, resourceRecipient, minimumBuyAmount, appData, userSalt);
+        ISilo deployedSilo = factory.createSilo(resourceToken, resourceRecipient, minimumBuyAmount, userSalt);
         vm.stopBroadcast();
 
         silo = Silo(address(deployedSilo));

@@ -1,8 +1,10 @@
 import { parseAbi } from "viem";
 
 export const siloAbi = parseAbi([
-  "event OrderCommitted(bytes32 indexed orderHash, address indexed sellToken, uint256 sellAmount)",
-  "function commit(bytes32 orderHash, address sellToken, uint256 sellAmount)",
+  "event TokenPrepared(address indexed sellToken, uint256 sellAmount)",
+  "error InvalidPreparation()",
+  "error ZeroAddress()",
+  "function prepare(address sellToken)",
   "function domainSeparator() view returns (bytes32)",
   "function resourceToken() view returns (address)",
   "function resourceRecipient() view returns (address)",
@@ -10,8 +12,8 @@ export const siloAbi = parseAbi([
   "function fundingAdapter() view returns (address)",
   "function setFundingAdapter(address newAdapter)",
   "function FUNDING_GAS_LIMIT() view returns (uint256)",
-  "function appData() view returns (bytes32)",
-  "function isCommitted(bytes32 orderHash) view returns (bool)",
+  "function appData(address sellToken) view returns (bytes32)",
+  "function preparedBalance(address sellToken) view returns (uint256)",
 ]);
 
 export const approvalFundingAdapterAbi = parseAbi([

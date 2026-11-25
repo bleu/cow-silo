@@ -20,9 +20,10 @@ export type OrderTermsResult =
   | { status: "error"; error: Error };
 
 type ReaderClient = Pick<PublicClient, "getBlock" | "multicall">;
-type SiloField = "resourceToken" | "resourceRecipient" | "appData" | "domainSeparator" | "minimumBuyAmount";
+type SiloField = "resourceToken" | "resourceRecipient" | "domainSeparator" | "minimumBuyAmount";
 type ReadCall =
   | { address: Address; abi: typeof siloAbi; functionName: SiloField }
+  | { address: Address; abi: typeof siloAbi; functionName: "appData"; args: readonly [Address] }
   | { address: Address; abi: typeof erc20Abi; functionName: "balanceOf"; args: readonly [Address] };
 
 export async function readOrderTermsBatch(
@@ -35,8 +36,8 @@ export async function readOrderTermsBatch(
   const indices = new Map<string, number>();
 
   function enqueue(call: ReadCall) {
-    const owner = call.functionName === "balanceOf" ? call.args[0].toLowerCase() : "";
-    const key = `${call.address.toLowerCase()}:${call.functionName}:${owner}`;
+    const args = "args" in call ? call.args.map((arg) => arg.toLowerCase()).join(":") : "";
+    const key = `${call.address.toLowerCase()}:${call.functionName}:${args}`;
     const existing = indices.get(key);
     if (existing !== undefined) return existing;
     const index = calls.length;
@@ -50,7 +51,7 @@ export async function readOrderTermsBatch(
     return {
       buyToken: field("resourceToken"),
       receiver: field("resourceRecipient"),
-      appData: field("appData"),
+      appData: enqueue({ address: silo, abi: siloAbi, functionName: "appData", args: [sellToken] }),
       domainSeparator: field("domainSeparator"),
       minimumBuyAmount: field("minimumBuyAmount"),
       sellAmount: enqueue({ address: sellToken, abi: erc20Abi, functionName: "balanceOf", args: [silo] }),

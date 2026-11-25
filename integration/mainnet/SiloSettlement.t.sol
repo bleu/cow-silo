@@ -6,6 +6,7 @@ import { Test } from "forge-std/Test.sol";
 import { IERC20 as CoWIERC20 } from "cowprotocol/contracts/interfaces/IERC20.sol";
 import { GPv2Order } from "cowprotocol/contracts/libraries/GPv2Order.sol";
 
+import { IHooksTrampoline } from "../../src/interfaces/IHooksTrampoline.sol";
 import { Silo } from "../../src/Silo.sol";
 import { ApprovalFundingAdapter } from "../../src/ApprovalFundingAdapter.sol";
 import { ISilo } from "../../src/interfaces/ISilo.sol";
@@ -26,7 +27,7 @@ contract SiloSettlementTest is Test {
     address internal constant VAULT_RELAYER = 0xC92E8bdf79f0507f65a392b0ab4667716BFE0110;
     uint256 internal constant SELL_AMOUNT = 1e6;
     uint256 internal constant BUY_AMOUNT = 5e14;
-    bytes32 internal constant APP_DATA = keccak256("cow-silo:mainnet-fork");
+    IHooksTrampoline internal constant TRAMPOLINE = IHooksTrampoline(0x60Bf78233f48eC42eE3F101b9a05eC7878728006);
 
     address internal treasury = makeAddr("treasury");
     address internal recipient = makeAddr("recipient");
@@ -37,6 +38,8 @@ contract SiloSettlementTest is Test {
         vm.createSelectFork(vm.envOr("MAINNET_RPC_URL", PUBLIC_RPC), vm.envOr("MAINNET_FORK_BLOCK", FORK_BLOCK));
         assertEq(block.chainid, 1, "Ethereum mainnet required");
         assertGt(address(SETTLEMENT).code.length, 0, "Settlement code missing");
+        assertGt(address(TRAMPOLINE).code.length, 0, "HooksTrampoline code missing");
+        assertEq(TRAMPOLINE.settlement(), address(SETTLEMENT));
         assertGt(address(USDC).code.length, 0, "USDC code missing");
         assertGt(address(WETH).code.length, 0, "WETH code missing");
         assertEq(address(SETTLEMENT.authenticator()), AUTHENTICATOR);
@@ -44,7 +47,7 @@ contract SiloSettlementTest is Test {
         assertTrue(SETTLEMENT.authenticator().isSolver(SOLVER), "Fixture solver is not authorized");
         assertGe(USDC.balanceOf(USDC_HOLDER), 3 * SELL_AMOUNT, "Fixture holder needs USDC");
 
-        silo = new Silo(SETTLEMENT, CoWIERC20(address(WETH)), recipient, BUY_AMOUNT, APP_DATA, address(this));
+        silo = new Silo(SETTLEMENT, CoWIERC20(address(WETH)), recipient, BUY_AMOUNT, address(this));
         adapter = new ApprovalFundingAdapter(treasury, address(silo));
         silo.setFundingAdapter(adapter);
 
@@ -78,6 +81,39 @@ contract SiloSettlementTest is Test {
         assertEq(WETH.balanceOf(recipient), recipientBefore + BUY_AMOUNT);
         assertEq(USDC.balanceOf(address(SETTLEMENT)), bufferUsdcBefore);
         assertEq(WETH.balanceOf(address(SETTLEMENT)), bufferWethBefore);
+        assertEq(SETTLEMENT.filledAmount(_uid(order)), SELL_AMOUNT);
+    }
+
+    function testUnrelatedAccountCanPrepareFundingBeforeStandardSettlement() public {
+        address caller = makeAddr("caller");
+        uint256 sourceBefore = USDC.balanceOf(treasury);
+        uint256 recipientBefore = WETH.balanceOf(recipient);
+        GPv2Order.Data memory order = _order(SELL_AMOUNT, BUY_AMOUNT);
+
+        vm.prank(caller);
+        silo.prepare(USDC);
+
+        assertEq(USDC.balanceOf(treasury), sourceBefore - SELL_AMOUNT);
+        assertEq(USDC.balanceOf(address(silo)), SELL_AMOUNT);
+        assertEq(USDC.balanceOf(caller), 0);
+        assertEq(silo.preparedBalance(USDC), SELL_AMOUNT);
+        _settle(order);
+
+        assertEq(USDC.balanceOf(address(silo)), 0);
+        assertEq(WETH.balanceOf(recipient), recipientBefore + BUY_AMOUNT);
+        assertEq(SETTLEMENT.filledAmount(_uid(order)), SELL_AMOUNT);
+    }
+
+    function testDirectSettlementPreparationWithoutTrampoline() public {
+        uint256 sourceBefore = USDC.balanceOf(treasury);
+        uint256 recipientBefore = WETH.balanceOf(recipient);
+        GPv2Order.Data memory order = _order(SELL_AMOUNT, BUY_AMOUNT);
+
+        _settle(order, false, "", false);
+
+        assertEq(USDC.balanceOf(treasury), sourceBefore - SELL_AMOUNT);
+        assertEq(USDC.balanceOf(address(silo)), 0);
+        assertEq(WETH.balanceOf(recipient), recipientBefore + BUY_AMOUNT);
         assertEq(SETTLEMENT.filledAmount(_uid(order)), SELL_AMOUNT);
     }
 
@@ -163,10 +199,10 @@ contract SiloSettlementTest is Test {
         GPv2Order.Data memory order = _order(SELL_AMOUNT + 1, BUY_AMOUNT);
         bytes memory stateBefore = _tradeState(order);
 
-        _settle(order, abi.encodeWithSelector(ISilo.BalanceChanged.selector, SELL_AMOUNT + 1, SELL_AMOUNT));
+        _settle(order, abi.encodeWithSelector(ISilo.InvalidPreparation.selector));
 
-        assertEq(_tradeState(order), stateBefore, "Failed commitment must roll back all trade state");
-        assertFalse(silo.isCommitted(order.hash(silo.domainSeparator())));
+        assertEq(_tradeState(order), stateBefore, "Failed preparation must roll back all trade state");
+        assertEq(silo.preparedBalance(USDC), 0);
     }
 
     function testBelowMinimumOrderRollsBackFunding() public {
@@ -176,7 +212,7 @@ contract SiloSettlementTest is Test {
         _settle(order, abi.encodeWithSelector(ISilo.BuyAmountBelowMinimum.selector, BUY_AMOUNT - 1, BUY_AMOUNT));
 
         assertEq(_tradeState(order), stateBefore, "Failed validation must roll back all trade state");
-        assertFalse(silo.isCommitted(order.hash(silo.domainSeparator())));
+        assertEq(silo.preparedBalance(USDC), 0);
     }
 
     function testLatePaymentFailureRollsBackEntireTrade() public {
@@ -188,7 +224,7 @@ contract SiloSettlementTest is Test {
         _settle(order, bytes(""));
 
         assertEq(_tradeState(order), stateBefore, "Failed payment must roll back all trade state");
-        assertFalse(silo.isCommitted(order.hash(silo.domainSeparator())));
+        assertEq(silo.preparedBalance(USDC), 0);
     }
 
     function _tradeState(GPv2Order.Data memory order) internal view returns (bytes memory) {
@@ -207,7 +243,7 @@ contract SiloSettlementTest is Test {
             USDC.allowance(address(silo), VAULT_RELAYER),
             WETH.allowance(SOLVER, address(SETTLEMENT)),
             SETTLEMENT.filledAmount(_uid(order)),
-            silo.isCommitted(order.hash(silo.domainSeparator()))
+            silo.preparedBalance(USDC)
         );
     }
 
@@ -219,7 +255,7 @@ contract SiloSettlementTest is Test {
             sellAmount: sellAmount,
             buyAmount: buyAmount,
             validTo: uint32(block.timestamp + 5 minutes),
-            appData: APP_DATA,
+            appData: silo.appData(USDC),
             feeAmount: 0,
             kind: GPv2Order.KIND_SELL,
             partiallyFillable: false,
@@ -237,6 +273,12 @@ contract SiloSettlementTest is Test {
     }
 
     function _settle(GPv2Order.Data memory order, bool expectFailure, bytes memory expectedRevert) internal {
+        _settle(order, expectFailure, expectedRevert, true);
+    }
+
+    function _settle(GPv2Order.Data memory order, bool expectFailure, bytes memory expectedRevert, bool useTrampoline)
+        internal
+    {
         CoWIERC20[] memory tokens = new CoWIERC20[](2);
         tokens[0] = order.sellToken;
         tokens[1] = order.buyToken;
@@ -259,11 +301,17 @@ contract SiloSettlementTest is Test {
         });
         IMainnetSettlement.Interaction[][3] memory interactions;
         interactions[0] = new IMainnetSettlement.Interaction[](1);
-        interactions[0][0] = IMainnetSettlement.Interaction({
-            target: address(silo),
-            value: 0,
-            callData: abi.encodeCall(ISilo.commit, (order.hash(silo.domainSeparator()), USDC, order.sellAmount))
-        });
+        if (useTrampoline) {
+            IHooksTrampoline.Hook[] memory hooks = new IHooksTrampoline.Hook[](1);
+            hooks[0] = IHooksTrampoline.Hook(address(silo), abi.encodeCall(ISilo.prepare, (USDC)), 500_000);
+            interactions[0][0] = IMainnetSettlement.Interaction({
+                target: address(TRAMPOLINE), value: 0, callData: abi.encodeCall(IHooksTrampoline.execute, (hooks))
+            });
+        } else {
+            interactions[0][0] = IMainnetSettlement.Interaction({
+                target: address(silo), value: 0, callData: abi.encodeCall(ISilo.prepare, (USDC))
+            });
+        }
         interactions[1] = new IMainnetSettlement.Interaction[](2);
         interactions[1][0] = IMainnetSettlement.Interaction({
             target: address(USDC), value: 0, callData: abi.encodeCall(IERC20.transfer, (SOLVER, order.sellAmount))

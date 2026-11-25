@@ -18,15 +18,21 @@ The solver sets `buyAmount`. This value is the order limit and must be at least 
 
 CoW Protocol scores competing settlements. A higher execution value improves the score when CoW recognizes the Silo as a surplus-capturing JIT owner.
 
+## AppData
+
+Each order uses a fixed JSON document with one pre-hook: `Silo.prepare(sellToken)`. The target is the Silo and the hook gas limit is 500,000. Only the hex-encoded calldata changes with the sell token. The Silo joins its fixed prefix, expected calldata hex, and fixed suffix, then checks the complete document hash against the order's `appData`.
+
+The SDK returns the exact document for publication to the CoW appData service. Solvers need that document to read the hook; its hash alone contains no readable hook instruction. Extra hooks, different metadata, or different JSON bytes produce a hash the Silo does not accept.
+
 ## Settlement
 
-The solution contains one pre-interaction for each Silo order. Each pre-interaction calls `Silo.commit` through the CoW Settlement contract. After checking the caller, token, and positive amount, the Silo attempts `fund(sellToken)` if an adapter is configured. The call has a fixed 200,000 gas cap. Failure and return data are ignored. A zero adapter skips funding.
+The solver executes the pre-hook before signature validation, directly or through the CoW Hooks Trampoline. Any account can call `prepare`; there is no configured hook caller. A call in an earlier transaction cannot prepare a later settlement because the snapshot clears at transaction end.
 
-The Silo then requires its actual token balance to equal the supplied sell amount. It approves the Vault Relayer when required and records the order hash in a dedicated transient-storage slot. If funding fails, prefunded inventory must still match the order amount exactly. Solvers must simulate the commit as part of the settlement; `verify` alone checks only the current balance and does not fund the Silo.
+On the first preparation for a token in a transaction, the Silo attempts `fund(sellToken)` if an adapter is configured. The call has a fixed 200,000 gas cap. Failure and return data are ignored. A zero adapter skips funding. The Silo requires a nonzero resulting balance, approves the Vault Relayer when required, and records the balance in transient storage. Further preparation for the same token reuses that snapshot without funding again.
 
-A valid commit can move source inventory into the Silo without a later trade. Funding rolls back if the outer transaction reverts, but a successful transaction can leave the funded tokens in the Silo.
+The Settlement contract then verifies each ERC-1271 signature. The Silo requires the order's sell amount to equal both the prepared balance and the current full balance. It also checks the order hash and all other order rules. Separate tokens have separate preparation snapshots. These snapshots clear at the end of the transaction.
 
-The Settlement contract then verifies each ERC-1271 signature. The Silo accepts only committed orders. Several independent Silo orders can execute in one settlement. Transient storage clears at the end of the transaction.
+Preparation can move source inventory into the Silo without a later trade. Funding rolls back if the outer transaction reverts, but a successful transaction can leave the funded tokens in the Silo. The trampoline ignores failed hook calls; missing preparation must therefore fail signature validation. Simulate the full settlement. A standalone `verify` checks only the current order rules and does not fund or prepare the Silo.
 
 ## Output
 

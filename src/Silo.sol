@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity 0.8.26;
 
+import { Strings } from "@openzeppelin/contracts/utils/Strings.sol";
 import { IERC1271 } from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { Ownable2Step } from "@openzeppelin/contracts/access/Ownable2Step.sol";
@@ -23,13 +24,12 @@ contract Silo is ISilo, Ownable2Step {
     uint32 public constant MAX_ORDER_DURATION = 5 minutes;
     uint256 public constant FUNDING_GAS_LIMIT = 200_000;
 
-    bytes32 private constant COMMITMENT_NAMESPACE = keccak256("cow-silo.Silo.commitment");
+    bytes32 private constant PREPARATION_NAMESPACE = keccak256("cow-silo.Silo.preparation");
 
     ISettlement public immutable override settlement;
     address public immutable override vaultRelayer;
     IERC20 public immutable override resourceToken;
     address public immutable override resourceRecipient;
-    bytes32 public immutable override appData;
     bytes32 public immutable override domainSeparator;
     uint256 public override minimumBuyAmount;
     IFundingAdapter public override fundingAdapter;
@@ -39,7 +39,6 @@ contract Silo is ISilo, Ownable2Step {
         IERC20 resourceToken_,
         address resourceRecipient_,
         uint256 minimumBuyAmount_,
-        bytes32 appData_,
         address initialOwner
     ) Ownable(initialOwner) {
         if (
@@ -54,7 +53,6 @@ contract Silo is ISilo, Ownable2Step {
         resourceToken = resourceToken_;
         resourceRecipient = resourceRecipient_;
         minimumBuyAmount = minimumBuyAmount_;
-        appData = appData_;
         domainSeparator = settlement_.domainSeparator();
 
         address vaultRelayer_ = settlement_.vaultRelayer();
@@ -79,14 +77,11 @@ contract Silo is ISilo, Ownable2Step {
     }
 
     /// @inheritdoc ISilo
-    /// @dev A solver adds one call per order as a pre-interaction. Commitments use separate transient slots and
-    /// therefore do not overwrite other Silo orders in the same settlement transaction.
-    function commit(bytes32 orderHash, OZIERC20 sellToken, uint256 sellAmount) external override {
-        if (msg.sender != address(settlement)) revert CommitOutsideSettlement();
+    function prepare(OZIERC20 sellToken) external override {
         if (address(sellToken) == address(0) || address(sellToken) == address(resourceToken)) {
             revert InvalidSellToken();
         }
-        if (sellAmount == 0) revert EmptyBalance();
+        if (preparedBalance(sellToken) != 0) return;
 
         IFundingAdapter adapter = fundingAdapter;
         if (address(adapter) != address(0)) {
@@ -99,25 +94,28 @@ contract Silo is ISilo, Ownable2Step {
         }
 
         uint256 actualBalance = sellToken.balanceOf(address(this));
-        if (actualBalance != sellAmount) revert BalanceChanged(sellAmount, actualBalance);
-
-        if (sellToken.allowance(address(this), vaultRelayer) < sellAmount) {
+        if (sellToken.allowance(address(this), vaultRelayer) < actualBalance) {
             sellToken.forceApprove(vaultRelayer, type(uint256).max);
             emit TokenApproved(address(sellToken), vaultRelayer);
         }
 
-        bytes32 slot = _commitmentSlot(orderHash);
+        actualBalance = sellToken.balanceOf(address(this));
+        // A callback can complete preparation before this call.
+        if (preparedBalance(sellToken) != 0) return;
+        if (actualBalance == 0) revert EmptyBalance();
+        bytes32 slot = _preparationSlot(sellToken);
         assembly ("memory-safe") {
-            tstore(slot, 1)
+            tstore(slot, actualBalance)
         }
-        emit OrderCommitted(orderHash, address(sellToken), sellAmount);
+        emit TokenPrepared(address(sellToken), actualBalance);
     }
 
     /// @inheritdoc IERC1271
     function isValidSignature(bytes32 hash, bytes calldata signature) external view override returns (bytes4) {
         GPv2Order.Data memory order = abi.decode(signature, (GPv2Order.Data));
         if (order.hash(domainSeparator) != hash) revert InvalidOrderHash();
-        if (!isCommitted(hash)) revert InvalidCommitment();
+        uint256 preparedAmount = preparedBalance(OZIERC20(address(order.sellToken)));
+        if (preparedAmount == 0 || preparedAmount != order.sellAmount) revert InvalidPreparation();
 
         verify(order);
         return IERC1271.isValidSignature.selector;
@@ -140,7 +138,7 @@ contract Silo is ISilo, Ownable2Step {
         if (order.validTo < block.timestamp || order.validTo > block.timestamp + MAX_ORDER_DURATION) {
             revert InvalidValidity();
         }
-        if (order.appData != appData) revert InvalidAppData();
+        if (order.appData != appData(OZIERC20(address(order.sellToken)))) revert InvalidAppData();
         if (order.feeAmount != 0) revert InvalidFee();
         if (order.kind != GPv2Order.KIND_SELL) revert InvalidKind();
         if (order.partiallyFillable) revert OrderIsPartiallyFillable();
@@ -150,16 +148,36 @@ contract Silo is ISilo, Ownable2Step {
     }
 
     /// @inheritdoc ISilo
-    function isCommitted(bytes32 orderHash) public view override returns (bool committed) {
-        bytes32 slot = _commitmentSlot(orderHash);
-        uint256 value;
-        assembly ("memory-safe") {
-            value := tload(slot)
-        }
-        committed = value == 1;
+    function appData(OZIERC20 sellToken) public view override returns (bytes32) {
+        return keccak256(
+            abi.encodePacked(
+                '{"version":"1.3.0","metadata":{"hooks":{"pre":[{"target":"',
+                Strings.toHexString(uint160(address(this)), 20),
+                '","callData":"',
+                Strings.toHexString(uint32(ISilo.prepare.selector), 4),
+                _addressWord(sellToken),
+                '","gasLimit":"500000"}]}}}'
+            )
+        );
     }
 
-    function _commitmentSlot(bytes32 orderHash) private pure returns (bytes32) {
-        return keccak256(abi.encode(COMMITMENT_NAMESPACE, orderHash));
+    /// @inheritdoc ISilo
+    function preparedBalance(OZIERC20 sellToken) public view override returns (uint256 amount) {
+        bytes32 slot = _preparationSlot(sellToken);
+        assembly ("memory-safe") {
+            amount := tload(slot)
+        }
+    }
+
+    function _addressWord(OZIERC20 token) private pure returns (bytes memory word) {
+        bytes memory hexWord = bytes(Strings.toHexString(uint160(address(token)), 32));
+        word = new bytes(64);
+        for (uint256 i; i < 64; ++i) {
+            word[i] = hexWord[i + 2];
+        }
+    }
+
+    function _preparationSlot(OZIERC20 sellToken) private pure returns (bytes32) {
+        return keccak256(abi.encode(PREPARATION_NAMESPACE, sellToken));
     }
 }

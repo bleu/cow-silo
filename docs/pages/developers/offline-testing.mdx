@@ -1,6 +1,14 @@
 # Offline testing
 
-The fast test loop uses Foundry mocks. It tests the order hash, transient commitment, approval, and permanent invariants.
+The fast test loop uses Foundry mocks. It tests the order hash, transient prepared balance, permissionless preparation, exact appData document hash, approval, and permanent invariants.
+
+Run the transaction-boundary test separately with isolation. It verifies that preparation cannot carry into a later transaction:
+
+```sh
+TEST_ISOLATED=true forge test --isolate --match-test testPreparationExpiresAfterTransaction
+```
+
+CI runs this command as well as the normal suite.
 
 The optional offline profile uses the CoW Protocol Offline Playground. It starts Anvil, Settlement, Vault Relayer, orderbook, autopilot, driver, baseline solver, tokens, and test liquidity.
 

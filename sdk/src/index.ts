@@ -4,6 +4,7 @@ import {
   encodeFunctionData,
   keccak256,
   parseAbiParameters,
+  stringToHex,
   type Address,
   type Hex,
 } from "viem";
@@ -50,10 +51,10 @@ export type SolverJitOrder = {
   signature: Hex;
 };
 
-export type Interaction = {
+export type PreparationHook = {
   target: Address;
-  value: "0";
   callData: Hex;
+  gasLimit: "500000";
 };
 
 export const ORDER_TYPE_HASH =
@@ -80,6 +81,11 @@ export function buildJitTrade(terms: OrderTerms, limit: { buyAmount: bigint; val
     throw new Error("validTo must be within five minutes of the observed block");
   }
 
+  const appData = buildAppData(terms.silo, terms.sellToken);
+  if (appData.hash !== terms.appData.toLowerCase()) {
+    throw new Error("appData must match the canonical preparation hook document");
+  }
+
   const order = buildOrder({
     sellToken: terms.sellToken,
     resourceToken: terms.buyToken,
@@ -92,7 +98,8 @@ export function buildJitTrade(terms: OrderTerms, limit: { buyAmount: bigint; val
   return {
     jitOrder: toSolverJitOrder(terms.silo, order),
     executedAmount: order.sellAmount.toString(),
-    preInteraction: buildCommitInteraction(terms.silo, order, terms.domainSeparator),
+    appDataDocument: appData.document,
+    preparationHook: appData.hook,
   };
 }
 
@@ -163,26 +170,23 @@ export function hashOrder(order: SiloOrder, domainSeparator: Hex): Hex {
   return keccak256(concatHex(["0x1901", domainSeparator, structHash]));
 }
 
-export function buildCommitInteraction(silo: Address, order: SiloOrder, domainSeparator: Hex): Interaction {
-  const orderHash = hashOrder(order, domainSeparator);
+/** Anyone can invoke the hook directly or through the standard CoW trampoline. */
+export function buildPreparationHook(silo: Address, sellToken: Address): PreparationHook {
   return {
-    target: silo,
-    value: "0",
+    target: silo.toLowerCase() as Address,
     callData: encodeFunctionData({
       abi: siloAbi,
-      functionName: "commit",
-      args: [orderHash, order.sellToken, order.sellAmount],
-    }),
+      functionName: "prepare",
+      args: [sellToken],
+    }).toLowerCase() as Hex,
+    gasLimit: "500000",
   };
 }
 
-/** Builds one pre-interaction for each independent Silo order in a settlement. */
-export function buildCommitInteractions(
-  silo: Address,
-  orders: readonly SiloOrder[],
-  domainSeparator: Hex,
-): Interaction[] {
-  return orders.map((order) => buildCommitInteraction(silo, order, domainSeparator));
+export function buildAppData(silo: Address, sellToken: Address) {
+  const hook = buildPreparationHook(silo, sellToken);
+  const document = JSON.stringify({ version: "1.3.0", metadata: { hooks: { pre: [hook] } } });
+  return { document, hash: keccak256(stringToHex(document)), hook };
 }
 
 export function toSolverJitOrder(silo: Address, order: SiloOrder): SolverJitOrder {

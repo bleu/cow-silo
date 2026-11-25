@@ -19,23 +19,17 @@ contract SiloFactory is ISiloFactory {
     }
 
     /// @inheritdoc ISiloFactory
-    function createSilo(
-        IERC20 resourceToken,
-        address resourceRecipient,
-        uint256 minimumBuyAmount,
-        bytes32 appData,
-        bytes32 userSalt
-    ) external override returns (ISilo silo) {
+    function createSilo(IERC20 resourceToken, address resourceRecipient, uint256 minimumBuyAmount, bytes32 userSalt)
+        external
+        override
+        returns (ISilo silo)
+    {
         bytes32 salt_ = salt(msg.sender, userSalt);
         silo = ISilo(
-            address(
-                new Silo{ salt: salt_ }(
-                    settlement, resourceToken, resourceRecipient, minimumBuyAmount, appData, msg.sender
-                )
-            )
+            address(new Silo{ salt: salt_ }(settlement, resourceToken, resourceRecipient, minimumBuyAmount, msg.sender))
         );
         emit SiloCreated(
-            address(silo), msg.sender, address(resourceToken), resourceRecipient, minimumBuyAmount, appData, userSalt
+            address(silo), msg.sender, address(resourceToken), resourceRecipient, minimumBuyAmount, userSalt
         );
     }
 
@@ -45,13 +39,12 @@ contract SiloFactory is ISiloFactory {
         IERC20 resourceToken,
         address resourceRecipient,
         uint256 minimumBuyAmount,
-        bytes32 appData,
         bytes32 userSalt
     ) external view override returns (address predicted) {
         bytes32 initCodeHash = keccak256(
             abi.encodePacked(
                 type(Silo).creationCode,
-                abi.encode(settlement, resourceToken, resourceRecipient, minimumBuyAmount, appData, owner)
+                abi.encode(settlement, resourceToken, resourceRecipient, minimumBuyAmount, owner)
             )
         );
         predicted = address(

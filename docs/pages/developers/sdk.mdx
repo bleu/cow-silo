@@ -1,6 +1,6 @@
 # Solver SDK
 
-`@cow-silo/sdk` reads onchain order terms and builds CoW solver JIT trades. You supply the Silo and sell token addresses. The SDK has no hosted server, price feed, or automatic token discovery. For a bounded log query that uses the `OrderCommitted` event in the exported `siloAbi`, see [Solvers](/actors/solvers).
+`@cow-silo/sdk` reads onchain order terms and builds CoW solver JIT trades. You supply the Silo and sell token addresses. The SDK has no hosted server, price feed, or automatic token discovery. For a bounded log query that uses the `TokenPrepared` event in the exported `siloAbi`, see [Solvers](/actors/solvers).
 
 ## Read order terms
 
@@ -22,14 +22,16 @@ Each `OrderTerms` snapshot contains:
 | --- | --- |
 | `silo`, `sellToken`, `buyToken`, `receiver` | Addresses. `buyToken` is the resource token and `receiver` is its configured recipient. |
 | `sellAmount`, `minimumBuyAmount` | Full sell balance and output floor, both `bigint` values in the respective token's smallest unit. |
-| `appData`, `domainSeparator` | Silo app data and the Settlement domain separator. |
+| `appData`, `domainSeparator` | The token-specific appData hash from `appData(sellToken)` and the Settlement domain separator. |
 | `blockNumber`, `blockTimestamp` | Snapshot block number and Unix time in seconds, both `bigint` values. |
 
 ## Build a JIT trade
 
 `buildJitTrade(terms, { buyAmount, validTo })` uses your quoted `buyAmount` (`bigint`) as the order limit. It must be at least `terms.minimumBuyAmount`. Pass `validTo` as a `number` in Unix seconds. At execution, it must be between the block timestamp and five minutes after that timestamp.
 
-The result contains `jitOrder` with the Silo-prefixed ERC-1271 signature, `executedAmount` as the full sell amount in decimal string form, and `preInteraction` for `Silo.commit`. Your solver assembles and simulates the settlement.
+The result contains `jitOrder` with the Silo-prefixed ERC-1271 signature, `executedAmount` as the full sell amount in decimal string form, `appDataDocument` as the exact JSON for publication, and `preparationHook` for `Silo.prepare(sellToken)`. The builder checks that the snapshot's appData hash matches the canonical document. Your solver assembles and simulates the settlement.
+
+Publish `appDataDocument` through the CoW appData service without changing its bytes. Its hash alone does not give solvers the hook. Execute `preparationHook` before signature validation, directly or through the CoW Hooks Trampoline. `prepare` accepts any caller. The SDK does not publish documents or encode the outer trampoline call.
 
 ## Lower-level functions
 
@@ -39,9 +41,19 @@ The result contains `jitOrder` with the Silo-prefixed ERC-1271 signature, `execu
 | `encodeOrderPayload` | Raw ERC-1271 payload for `Silo.isValidSignature`. |
 | `encodeSolverSignature` | CoW solver API signature with the Silo owner prefix. |
 | `hashOrder` | CoW EIP-712 order digest from a Settlement domain separator. |
-| `buildCommitInteraction` | Pre-interaction for `Silo.commit`. |
-| `buildCommitInteractions` | Pre-interactions for several independent Silo orders. |
+| `buildPreparationHook` | Hook target, calldata for permissionless `prepare(sellToken)`, and fixed gas limit. |
+| `buildAppData` | Exact JSON document, its complete hash, and the preparation hook for a Silo/token pair. |
 | `toSolverJitOrder` | CoW solver API JIT order object. |
+
+## Canonical appData
+
+The document uses this compact JSON shape, with no whitespace or trailing newline:
+
+```json
+{"version":"1.3.0","metadata":{"hooks":{"pre":[{"target":"<lowercase Silo address>","callData":"<lowercase prepare(sellToken) calldata>","gasLimit":"500000"}]}}}
+```
+
+`buildAppData` fills these values and hashes the UTF-8 bytes. The Silo rebuilds the same prefix, calldata hex, and suffix. The target has 20 bytes and calldata has 36 bytes, each with a `0x` prefix and leading zeroes preserved. The hook budget covers preparation, including the separate 200,000-gas adapter cap. Do not add metadata, change key order, or add hooks to an accepted document.
 
 ## Funding adapter ABI
 
@@ -51,7 +63,7 @@ The result contains `jitOrder` with the Silo-prefixed ERC-1271 signature, `execu
 
 For `ApprovalFundingAdapter`, set the order's `sellAmount` to the current Silo balance plus `availableBalance(sellToken)`. That view returns the smaller of the source balance and allowance to the adapter. Use zero expected funding when no adapter is configured. The shared `IFundingAdapter` interface requires only `fund(token)`; there is no mandatory quote method, amount argument, or arbitrary bytes input.
 
-These reads are estimates for order construction. Inventory, allowances, and adapter configuration can change before execution. `commit` attempts funding with a fixed 200,000 gas cap, ignores failure and return data, then requires the actual Silo balance to match `sellAmount` exactly. The cap does not guarantee success for an undergassed outer transaction. A prefunded fallback must still match the supplied amount. Simulate the complete settlement, including commit. A standalone `verify` checks only the current balance and does not fund the Silo.
+These reads are estimates for order construction. Inventory, allowances, and adapter configuration can change before execution. `prepare` attempts funding with a fixed 200,000 gas cap, ignores failure and return data, then records the actual nonzero Silo balance. Signature validation requires the order's `sellAmount` to match both that snapshot and the live full balance. The cap does not guarantee success for an undergassed outer transaction. A prefunded fallback must still match the order amount. Simulate the complete settlement, including the preparation hook and signature validation. A standalone `verify` checks only the current order rules and does not fund or prepare the Silo.
 
 Run the SDK tests:
 

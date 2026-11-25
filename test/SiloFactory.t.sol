@@ -28,15 +28,12 @@ contract SiloFactoryTest is Test {
     function testCreatesAtPredictedAddress() public {
         address creator = makeAddr("creator");
         address recipient = makeAddr("recipient");
-        bytes32 appData = keccak256("appData");
         bytes32 userSalt = keccak256("userSalt");
-        address predicted = factory.predictSiloAddress(
-            creator, IERC20(address(resource)), recipient, MINIMUM_BUY_AMOUNT, appData, userSalt
-        );
+        address predicted =
+            factory.predictSiloAddress(creator, IERC20(address(resource)), recipient, MINIMUM_BUY_AMOUNT, userSalt);
 
         vm.prank(creator);
-        ISilo deployedSilo =
-            factory.createSilo(IERC20(address(resource)), recipient, MINIMUM_BUY_AMOUNT, appData, userSalt);
+        ISilo deployedSilo = factory.createSilo(IERC20(address(resource)), recipient, MINIMUM_BUY_AMOUNT, userSalt);
         Silo silo = Silo(address(deployedSilo));
 
         assertEq(address(silo), predicted);
@@ -54,5 +51,15 @@ contract SiloFactoryTest is Test {
     function testConstructorRejectsZeroSettlement() public {
         vm.expectRevert(ISiloFactory.ZeroAddress.selector);
         new SiloFactory(ISettlement(address(0)));
+    }
+
+    function testCreatorNamespacesPredictedAddress() public view {
+        address first = factory.predictSiloAddress(
+            address(1), IERC20(address(resource)), address(3), MINIMUM_BUY_AMOUNT, bytes32(0)
+        );
+        address second = factory.predictSiloAddress(
+            address(2), IERC20(address(resource)), address(3), MINIMUM_BUY_AMOUNT, bytes32(0)
+        );
+        assertNotEq(first, second);
     }
 }
