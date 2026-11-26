@@ -3,7 +3,9 @@ import {
   encodeAbiParameters,
   encodeFunctionData,
   keccak256,
+  maxUint256,
   parseAbiParameters,
+  stringToHex,
   type Address,
   type Hex,
 } from "viem";
@@ -56,6 +58,12 @@ export type Interaction = {
   callData: Hex;
 };
 
+export type PreparationHook = {
+  target: Address;
+  callData: Hex;
+  gasLimit: string;
+};
+
 export const ORDER_TYPE_HASH =
   "0xd5a25ba2e97094ad7d83dc28a6572da797d6b3e7fc6663bd93efb789fc17e489" as const;
 export const KIND_SELL =
@@ -69,9 +77,15 @@ const orderHashParameters = parseAbiParameters(
   "bytes32 typeHash, address sellToken, address buyToken, address receiver, uint256 sellAmount, uint256 buyAmount, uint32 validTo, bytes32 appData, uint256 feeAmount, bytes32 kind, bool partiallyFillable, bytes32 sellTokenBalance, bytes32 buyTokenBalance",
 );
 
+/** Run the canonical prepare hook, then the direct Settlement commit pre-interaction before validation; commit also prepares as a fallback. */
 export function buildJitTrade(terms: OrderTerms, limit: { buyAmount: bigint; validTo: number }) {
   const executionDeadline = limit.validTo - terms.auctionDuration;
   assertExecutionWindow(executionDeadline - Number(terms.blockTimestamp));
+
+  const appData = buildAppData(terms.silo, terms.sellToken, terms.hookGasLimit);
+  if (appData.hash !== terms.appData.toLowerCase()) {
+    throw new Error("appData must match the canonical preparation hook document");
+  }
 
   const order = buildOrder({
     sellToken: terms.sellToken,
@@ -86,6 +100,8 @@ export function buildJitTrade(terms: OrderTerms, limit: { buyAmount: bigint; val
     jitOrder: toSolverJitOrder(terms.silo, order),
     executedAmount: order.sellAmount.toString(),
     preInteraction: buildCommitInteraction(terms.silo, order),
+    appDataDocument: appData.document,
+    preparationHook: appData.hook,
   };
 }
 
@@ -187,6 +203,7 @@ export function hashOrder(order: SiloOrder, domainSeparator: Hex): Hex {
   return keccak256(concatHex(["0x1901", domainSeparator, structHash]));
 }
 
+/** Call directly from Settlement, not through the hooks trampoline. */
 export function buildCommitInteraction(silo: Address, order: SiloOrder): Interaction {
   return {
     target: silo,
@@ -199,7 +216,7 @@ export function buildCommitInteraction(silo: Address, order: SiloOrder): Interac
   };
 }
 
-/** Builds one pre-interaction for each independent Silo order in a settlement. */
+/** Builds one direct Settlement pre-interaction for each independent Silo order. */
 export function buildCommitInteractions(
   silo: Address,
   orders: readonly SiloOrder[],
@@ -211,6 +228,28 @@ export function buildCommitInteractions(
     sellTokens.add(token);
     return buildCommitInteraction(silo, order);
   });
+}
+
+/** Anyone can invoke the hook directly or through the standard CoW trampoline. */
+export function buildPreparationHook(silo: Address, sellToken: Address, hookGasLimit: bigint): PreparationHook {
+  if (hookGasLimit <= 0n || hookGasLimit > maxUint256) {
+    throw new Error("hookGasLimit must be a nonzero uint256");
+  }
+  return {
+    target: silo.toLowerCase() as Address,
+    callData: encodeFunctionData({
+      abi: siloAbi,
+      functionName: "prepare",
+      args: [sellToken],
+    }).toLowerCase() as Hex,
+    gasLimit: hookGasLimit.toString(),
+  };
+}
+
+export function buildAppData(silo: Address, sellToken: Address, hookGasLimit: bigint) {
+  const hook = buildPreparationHook(silo, sellToken, hookGasLimit);
+  const document = JSON.stringify({ version: "1.3.0", metadata: { hooks: { pre: [hook] } } });
+  return { document, hash: keccak256(stringToHex(document)), hook };
 }
 
 export function toSolverJitOrder(silo: Address, order: SiloOrder): SolverJitOrder {

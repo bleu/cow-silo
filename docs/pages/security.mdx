@@ -10,31 +10,42 @@ The Silo enforces these rules:
 - The sell amount equals the complete current balance.
 - The buy amount meets the current resource-denominated minimum.
 - The execution deadline is at most five minutes ahead. CoW `validTo` also includes the auction duration.
-- The app data matches the fixed app data.
+- The appData hash matches the complete canonical JSON document for this Silo, sell token, and current hook gas limit.
 - The fee is zero.
 - The order is a fill-or-kill sell order.
 - Both balance types are ERC-20.
-- The Settlement contract committed each exact order hash in the same transaction.
+- The token was prepared in the same transaction.
+- The order's sell amount equals the prepared balance and the current full balance.
 
-Each sell token has one active commitment per Silo. A later commit for the same token replaces the first.
+Preparation uses a separate transient balance snapshot for each token. Repeated preparation returns without funding again. Descending auctions also require an active exact-order commitment from Settlement in the same transaction. A later commit for the same sell token replaces the first. The commit registers the UID for persistent fill tracking; preparation alone cannot track a sale. Flat auctions can validate with preparation alone. Transient slots clear at transaction end.
+
+`prepare` is permissionless. Any account can trigger optional funding into the fixed Silo without an order or a later trade. Source approvals must permit this transfer. Order hash, amount, recipient, and other policy checks still apply when an order is validated.
 
 ## Administrative control
 
-The Silo uses two-step ownership. The owner can replace or disable `fundingAdapter`. The auction settings are immutable. The owner cannot change the resource token, recipient, Settlement contract, Vault Relayer, or app data. The owner cannot withdraw fee tokens.
+The Silo uses two-step ownership. The owner can change `hookGasLimit` and replace or disable `fundingAdapter`. A zero hook gas limit is not valid. The auction settings, resource token, recipient, Settlement contract, Vault Relayer, and appData JSON shape are immutable. The owner cannot withdraw fee tokens.
 
-Renouncing ownership permanently freezes the adapter configuration. A production protocol should use its standard governance controls as the owner.
+Renouncing ownership permanently freezes the hook gas limit and adapter configuration. A production protocol should use its standard governance controls as the owner.
 
 ## Optional funding
 
-Funding starts disabled. After caller, token, and positive-amount checks, `commit` attempts `fund(sellToken)` on a non-zero adapter with a fixed 200,000 gas cap. It ignores failure and return data. An expensive adapter can fail within this cap. The cap does not guarantee success when the outer transaction has too little gas. If funding fails, the current Silo balance must still exactly match `sellAmount`; prefunding alone does not make an order for a larger amount valid.
+Funding starts disabled. After checking the token, the first `prepare` for that token attempts `fund(sellToken)` on a non-zero adapter with a fixed 200,000 gas cap. It ignores failure and return data. An expensive adapter can fail within this cap. The cap does not guarantee success when the outer transaction has too little gas. Preparation records the actual nonzero balance. If funding fails, prefunded inventory must still match the order's `sellAmount` when its signature is validated.
 
 `ApprovalFundingAdapter` fixes a non-zero source and Silo recipient. Only the Silo can call `fund`. The source approves the adapter as the actual spender, not the Silo or Vault Relayer. The adapter can transfer only the smaller of the source balance and its allowance. Replacing or disabling the adapter does not revoke the source's token allowances. Revoke old adapter allowances separately.
 
-Source approval permits inventory to move into the Silo on a valid `commit`. A commitment does not require a later trade or signature validation. An authorized Settlement interaction can commit a matching funded balance without selling it, leaving source tokens in the Silo. The fixed recipient prevents diversion to another address; it does not guarantee that source inventory stays at the source until a completed conversion.
+Source approval permits inventory to move into the Silo during preparation. Preparation does not require a later trade or signature validation. Any account can prepare a funded token without selling it, leaving source tokens in the Silo. The fixed recipient prevents diversion to another address; it does not guarantee that source inventory stays at the source until a completed conversion.
 
-Changes to source inventory, allowances, or adapter configuration can make the exact-balance check revert. If the outer transaction reverts, the source transfer also rolls back. A successful commit without a trade does not roll back funding.
+Changes to source inventory, allowances, or adapter configuration can make the order's exact-balance checks fail. If the outer transaction reverts, the source transfer also rolls back. Successful preparation without a trade does not roll back funding.
 
 Adapters have no privileged withdrawal bypass. A protocol-specific adapter must use the source protocol's existing permissions. Review those permissions and adapter behavior before granting access.
+
+## AppData and hook execution
+
+The document specifies exactly one `prepare(sellToken)` pre-hook, this Silo as target, and the current `hookGasLimit` as a decimal string. The limit defaults to 500,000 and only the owner can change it. The Silo hashes the complete JSON bytes; it does not parse arbitrary JSON or accept reserved hash bytes. Different tokens have different hashes. Unapproved gas limits, changed hooks, metadata, key order, or whitespace are not accepted.
+
+A gas-limit update changes the expected appData hash for every sell token. Old documents are rejected while the limit differs. Restoring a previous value can make its documents valid again, subject to the other order checks. The setter is not permanent order cancellation. Low limits can make the hook fail; large limits can exceed solver or transaction gas constraints. The owner must test the chosen budget. The separate funding-adapter cap stays at 200,000.
+
+A correct hash proves which document an order uses. It does not publish the document or execute the hook. Solvers must obtain the exact document and execute its hook before signature validation, directly or through the CoW Hooks Trampoline. The trampoline ignores hook failures and cannot call `commit`; that call must come directly from Settlement. Missing preparation fails ERC-1271 validation, as does a missing active commitment for a descending auction.
 
 ## Required external controls
 
@@ -44,7 +55,7 @@ The Silo has no price oracle. The minimum buy amount is an absolute output floor
 
 ## Token behavior
 
-The first commit for a token gives the Vault Relayer an unlimited allowance. The configured CoW Settlement contract is the only caller of the Vault Relayer.
+The first successful preparation for a token gives the Vault Relayer an unlimited allowance. The configured CoW Settlement contract is the only caller of the Vault Relayer.
 
 Rebasing tokens, fee-on-transfer tokens, callback tokens, and tokens with unusual approval rules need separate tests. The current version targets standard ERC-20 tokens.
 

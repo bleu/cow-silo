@@ -1,7 +1,7 @@
 {
   "name": "@cow-silo/sdk",
   "version": "0.1.0",
-  "description": "Order and interaction builders for CoW Silo solvers",
+  "description": "Order and appData builders for CoW Silo solvers",
   "type": "module",
   "sideEffects": false,
   "files": [

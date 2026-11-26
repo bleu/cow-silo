@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity 0.8.26;
 
+import { IERC20 as OZIERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { Silo } from "../../src/Silo.sol";
 import { ISilo } from "../../src/interfaces/ISilo.sol";
 import { Test } from "forge-std/Test.sol";
@@ -10,8 +11,6 @@ import { GPv2Order } from "cowprotocol/contracts/libraries/GPv2Order.sol";
 import { IMainnetSettlement } from "../../integration/mainnet/helpers/IMainnetSettlement.sol";
 import { MockERC20 } from "../mocks/MockERC20.sol";
 
-/// forge-config: default.isolate = true
-/// forge-config: ci.isolate = true
 contract AuctionClockTest is Test {
     using GPv2Order for GPv2Order.Data;
 
@@ -27,6 +26,7 @@ contract AuctionClockTest is Test {
     }
 
     function setUp() public {
+        vm.skip(!vm.envOr("TEST_ISOLATED", false));
         settlement = IMainnetSettlement(
             deployCode(
                 "lib/cowprotocol-contracts/deployments/mainnet/GPv2Settlement.json",
@@ -36,7 +36,7 @@ contract AuctionClockTest is Test {
         tokenA = new MockERC20("Token A", "A");
         tokenB = new MockERC20("Token B", "B");
         resource = new MockERC20("Resource", "R");
-        silo = new Silo(settlement, IERC20(address(resource)), recipient, 150, 100, 2 hours, bytes32(0), address(this));
+        silo = new Silo(settlement, IERC20(address(resource)), recipient, 150, 100, 2 hours, address(this));
         tokenA.mint(address(silo), 10);
         tokenB.mint(address(silo), 20);
         resource.mint(address(settlement), 1_000);
@@ -156,6 +156,37 @@ contract AuctionClockTest is Test {
         assertEq(resource.balanceOf(recipient), 225);
     }
 
+    function testPersistentAttemptDoesNotAuthorizeNextTransaction() public {
+        GPv2Order.Data memory order = _order(tokenA, 100);
+        _settle(order, false, "");
+        assertFalse(silo.isCommitted(order.hash(settlement.domainSeparator())));
+        assertEq(silo.preparedBalance(OZIERC20(address(tokenA))), 0);
+        bytes32 digest = order.hash(settlement.domainSeparator());
+        vm.expectRevert(ISilo.InvalidPreparation.selector);
+        silo.isValidSignature(digest, abi.encode(order));
+        vm.expectRevert(ISilo.InvalidCommitment.selector);
+        this.prepareAndValidate(order);
+        assertEq(silo.currentMinimumBuyAmount(order.sellToken), 100);
+    }
+
+    function prepareAndValidate(GPv2Order.Data calldata order) external returns (bytes4) {
+        silo.prepare(OZIERC20(address(order.sellToken)));
+        return silo.isValidSignature(order.hash(settlement.domainSeparator()), abi.encode(order));
+    }
+
+    function testPermissionlessPreparationDoesNotRestartFilledToken() public {
+        _settle(_order(tokenA, 100), true, "");
+        tokenA.mint(address(silo), 11);
+        uint256 saleTime = block.timestamp;
+        vm.warp(saleTime + 30 minutes);
+        assertEq(silo.currentMinimumBuyAmount(IERC20(address(tokenA))), 138);
+        silo.prepare(OZIERC20(address(tokenA)));
+        assertEq(silo.currentMinimumBuyAmount(IERC20(address(tokenA))), 138);
+        vm.warp(saleTime + 1 hours);
+        silo.prepare(OZIERC20(address(tokenA)));
+        assertEq(silo.currentMinimumBuyAmount(IERC20(address(tokenA))), 125);
+    }
+
     function _order(MockERC20 token, uint256 buyAmount) internal view returns (GPv2Order.Data memory order) {
         order.sellToken = IERC20(address(token));
         order.buyToken = IERC20(address(resource));
@@ -163,6 +194,7 @@ contract AuctionClockTest is Test {
         order.sellAmount = token.balanceOf(address(silo));
         order.buyAmount = buyAmount;
         order.validTo = uint32(block.timestamp + 2 hours + 5 minutes);
+        order.appData = silo.appData(OZIERC20(address(token)));
         order.kind = GPv2Order.KIND_SELL;
         order.sellTokenBalance = GPv2Order.BALANCE_ERC20;
         order.buyTokenBalance = GPv2Order.BALANCE_ERC20;

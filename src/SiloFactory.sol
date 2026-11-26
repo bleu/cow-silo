@@ -25,7 +25,6 @@ contract SiloFactory is ISiloFactory {
         uint256 initialBuyAmount,
         uint256 minimumBuyAmount,
         uint32 auctionDuration,
-        bytes32 appData,
         bytes32 userSalt
     ) external override returns (ISilo silo) {
         if (initialBuyAmount == minimumBuyAmount) auctionDuration = 0;
@@ -37,7 +36,6 @@ contract SiloFactory is ISiloFactory {
             initialBuyAmount,
             minimumBuyAmount,
             auctionDuration,
-            appData,
             msg.sender
         );
         emit SiloCreated(
@@ -48,7 +46,6 @@ contract SiloFactory is ISiloFactory {
             initialBuyAmount,
             minimumBuyAmount,
             auctionDuration,
-            appData,
             userSalt
         );
     }
@@ -61,12 +58,11 @@ contract SiloFactory is ISiloFactory {
         uint256 initialBuyAmount,
         uint256 minimumBuyAmount,
         uint32 auctionDuration,
-        bytes32 appData,
         bytes32 userSalt
     ) external view override returns (address predicted) {
         if (initialBuyAmount == minimumBuyAmount) auctionDuration = 0;
         bytes32 initCodeHash = _initCodeHash(
-            owner, resourceToken, resourceRecipient, initialBuyAmount, minimumBuyAmount, auctionDuration, appData
+            owner, resourceToken, resourceRecipient, initialBuyAmount, minimumBuyAmount, auctionDuration
         );
         predicted = address(
             uint160(
@@ -81,18 +77,10 @@ contract SiloFactory is ISiloFactory {
         address resourceRecipient,
         uint256 initialBuyAmount,
         uint256 minimumBuyAmount,
-        uint32 auctionDuration,
-        bytes32 appData
+        uint32 auctionDuration
     ) private view returns (bytes32) {
         bytes memory args = abi.encode(
-            settlement,
-            resourceToken,
-            resourceRecipient,
-            initialBuyAmount,
-            minimumBuyAmount,
-            auctionDuration,
-            appData,
-            owner
+            settlement, resourceToken, resourceRecipient, initialBuyAmount, minimumBuyAmount, auctionDuration, owner
         );
         return keccak256(bytes.concat(type(Silo).creationCode, args));
     }

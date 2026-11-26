@@ -18,12 +18,11 @@ contract DeploySilo is Script {
         uint256 initialBuyAmount = vm.envUint("INITIAL_BUY_AMOUNT");
         uint256 minimumBuyAmount = vm.envUint("MINIMUM_BUY_AMOUNT");
         uint32 auctionDuration = SafeCast.toUint32(vm.envUint("AUCTION_DURATION"));
-        bytes32 appData = vm.envBytes32("APP_DATA");
         bytes32 userSalt = vm.envOr("USER_SALT", bytes32(0));
 
         vm.startBroadcast(privateKey);
         ISilo deployedSilo = factory.createSilo(
-            resourceToken, resourceRecipient, initialBuyAmount, minimumBuyAmount, auctionDuration, appData, userSalt
+            resourceToken, resourceRecipient, initialBuyAmount, minimumBuyAmount, auctionDuration, userSalt
         );
         vm.stopBroadcast();
 

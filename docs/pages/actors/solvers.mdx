@@ -4,9 +4,9 @@ A solver can use Silo inventory to fill user orders in a CoW batch or route it t
 
 ## Find candidate sell tokens
 
-Find Silo addresses in the `SiloCreated` logs of a factory you trust, or use a configured address. Each Silo's `OrderCommitted` logs identify tokens from past commitments. A log does not tell you the current balance, and a newly deposited token might have no log. Add seed token addresses from your own list to cover those deposits.
+Find Silo addresses in the `SiloCreated` logs of a factory you trust, or use a configured address. Each Silo's `TokenPrepared` logs identify tokens from past preparations. A log does not tell you the current balance, and a newly deposited token might have no log. Add seed token addresses from your own list to cover those deposits.
 
-This example uses a viem public `client` and a known `silo` with funding disabled. Check `fundingAdapter()` at the selected block before using a balance-only quote. If an adapter is configured, see [Funding and simulation](#funding-and-simulation). Set `seedTokens` to an empty array if you have no seeds. Adjust the log window to fit your RPC provider's limit. Keep the tokens you find in your watchlist so a pair stays on the list after its last commitment leaves the window.
+This example uses a viem public `client` and a known `silo` with funding disabled. Check `fundingAdapter()` at the selected block before using a balance-only quote. If an adapter is configured, see [Funding and simulation](#funding-and-simulation). Set `seedTokens` to an empty array if you have no seeds. Adjust the log window to fit your RPC provider's limit. Keep the tokens you find in your watchlist so a pair stays on the list after its last preparation leaves the window.
 
 ```ts
 import { getAddress } from "viem";
@@ -16,7 +16,7 @@ const blockNumber = await client.getBlockNumber();
 const logs = await client.getContractEvents({
   address: silo,
   abi: siloAbi,
-  eventName: "OrderCommitted",
+  eventName: "TokenPrepared",
   fromBlock: blockNumber >= 999n ? blockNumber - 999n : 0n,
   toBlock: blockNumber,
   strict: true,
@@ -54,18 +54,20 @@ for (const [i, result] of results.entries()) {
 }
 ```
 
-When you build the settlement, use `jitOrder` and `executedAmount` for the fill-or-kill JIT trade. Include its `preInteraction` so Settlement calls `Silo.commit` before signature verification. Simulate the full settlement against current state before submission. If the balance or current minimum changed, read the terms again and get a new quote.
+Use `jitOrder` and `executedAmount` for the fill-or-kill JIT trade. Publish the exact `appDataDocument` bytes through the CoW appData service before relying on hash lookup. Execute `preparationHook` directly or through the CoW Hooks Trampoline, then include `preInteraction` so Settlement calls `Silo.commit(order)` directly before signature validation. The trampoline cannot commit. Descending auctions require this exact-order commitment for UID/fill tracking. Flat auctions can validate with preparation alone; the SDK always returns the commit interaction.
+
+The SDK does not publish documents or build the outer trampoline call. Your settlement builder must preserve the hook's target, calldata, and gas limit from the snapshot. The default limit is 500,000; the owner can change it with `setHookGasLimit`. `prepare` is permissionless and also accepts direct Settlement calls. The trampoline ignores failed hook calls, so simulate the full settlement, including signature validation. If the balance, current minimum, or hook gas limit changed, read the terms again and get a new quote. A hook-gas change changes the appData hash for every sell token, so rebuild the order and publish its new exact document.
 
 ## Funding and simulation
 
 If an adapter is configured, use `buildOrder` with `sellAmount = siloBalance + expectedAdapterFunding`. For `ApprovalFundingAdapter`, read `availableBalance(sellToken)`: the smaller of the source balance and allowance to the adapter. `IFundingAdapter` defines only `fund(token)` and has no mandatory quote method. Other adapters need their own funding estimate. The solver supplies no funding amount or arbitrary bytes to the adapter.
 
-`commit` attempts funding after caller, token, and positive-amount checks. It then requires the actual combined Silo balance to equal the order's sell amount. Source inventory, allowance, or adapter configuration changes can make this check revert. An outer transaction revert rolls back source transfers. `verify` before funding still checks only the current Silo balance, so it can reject an order that includes expected funding. Simulate the full settlement with the commit pre-interaction.
+`prepare` attempts funding after checking the sell token. It records the actual combined Silo balance. Signature validation requires that snapshot and the current full balance to equal the order's sell amount. Source inventory, allowance, or adapter configuration changes can invalidate the amount. An outer transaction revert rolls back source transfers. `verify` before funding still checks only the current Silo balance, so it can reject an order that includes expected funding. Simulate the full settlement with the preparation hook.
 
 The adapter call has a fixed 200,000 gas cap. Failure and return data are ignored. Adapters that need more gas can fail. The cap does not guarantee success when the outer transaction has too little gas. A prefunded fallback works only when the actual Silo balance still equals `sellAmount`.
 
-A valid commit does not enforce a later trade or signature validation. An authorized Settlement interaction can fund and commit a matching balance without a sale. A successful transaction can therefore leave source inventory in the Silo. Do not treat commitment as proof of conversion. All order, minimum-buy, and ERC-1271 checks still apply when the order is validated.
+Preparation does not enforce a later trade or signature validation. Any account can fund and prepare a token without an order or a sale. A successful transaction can therefore leave source inventory in the Silo. All order, minimum-buy, and ERC-1271 checks still apply when the order is validated.
 
-Use `buildCommitInteractions` when a settlement contains several Silo orders. Use distinct sell tokens for orders from the same Silo. A later commit for the same token replaces the first.
+Each token has a separate transient balance snapshot. Repeated preparation reuses it without funding again; `commit` prepares if needed. Use `buildCommitInteractions` for several orders with distinct sell tokens. A later commit for the same token replaces the active hash. Preparation and active commitments clear at transaction end.
 
 The SDK emits the current CoW solver JIT wire format. Your solver still controls the solution graph and interaction placement. An order can execute above its limit; all executed resource-token output goes to the configured recipient.

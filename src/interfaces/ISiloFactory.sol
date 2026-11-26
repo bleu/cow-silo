@@ -17,7 +17,6 @@ interface ISiloFactory {
         uint256 initialBuyAmount,
         uint256 minimumBuyAmount,
         uint32 auctionDuration,
-        bytes32 appData,
         bytes32 userSalt
     );
 
@@ -31,7 +30,6 @@ interface ISiloFactory {
     /// @param initialBuyAmount The output floor at auction start, in the resource token's smallest unit.
     /// @param minimumBuyAmount The output floor at auction end, in the same unit.
     /// @param auctionDuration The auction duration in seconds. The factory uses zero when both amounts are equal.
-    /// @param appData The app-data hash required in every order.
     /// @param userSalt A caller-scoped CREATE2 salt.
     function createSilo(
         IERC20 resourceToken,
@@ -39,7 +37,6 @@ interface ISiloFactory {
         uint256 initialBuyAmount,
         uint256 minimumBuyAmount,
         uint32 auctionDuration,
-        bytes32 appData,
         bytes32 userSalt
     ) external returns (ISilo silo);
 
@@ -51,7 +48,6 @@ interface ISiloFactory {
         uint256 initialBuyAmount,
         uint256 minimumBuyAmount,
         uint32 auctionDuration,
-        bytes32 appData,
         bytes32 userSalt
     ) external view returns (address predicted);
 

@@ -4,6 +4,19 @@ pragma solidity 0.8.26;
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import { IFundingAdapter } from "../../src/interfaces/IFundingAdapter.sol";
+import { ISilo } from "../../src/interfaces/ISilo.sol";
+
+contract ReentrantFundingAdapter is IFundingAdapter {
+    bool private funding;
+
+    function fund(IERC20 sellToken) external override {
+        if (funding) return;
+        funding = true;
+        ISilo(msg.sender).prepare(sellToken);
+        require(sellToken.transfer(msg.sender, 1));
+        funding = false;
+    }
+}
 
 contract LargeReturnDataFundingAdapter is IFundingAdapter {
     bool internal immutable shouldRevert;

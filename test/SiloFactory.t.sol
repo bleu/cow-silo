@@ -28,17 +28,16 @@ contract SiloFactoryTest is Test {
     function testCreatesAtPredictedAddress() public {
         address creator = makeAddr("creator");
         address recipient = makeAddr("recipient");
-        bytes32 appData = keccak256("appData");
         bytes32 userSalt = keccak256("userSalt");
         IERC20 token = IERC20(address(resource));
         address predicted =
-            factory.predictSiloAddress(creator, token, recipient, 20 ether, MINIMUM_BUY_AMOUNT, 300, appData, userSalt);
+            factory.predictSiloAddress(creator, token, recipient, 20 ether, MINIMUM_BUY_AMOUNT, 300, userSalt);
         vm.expectEmit(true, true, true, true, address(factory));
         emit ISiloFactory.SiloCreated(
-            predicted, creator, address(token), recipient, 20 ether, MINIMUM_BUY_AMOUNT, 300, appData, userSalt
+            predicted, creator, address(token), recipient, 20 ether, MINIMUM_BUY_AMOUNT, 300, userSalt
         );
         vm.prank(creator);
-        ISilo silo = factory.createSilo(token, recipient, 20 ether, MINIMUM_BUY_AMOUNT, 300, appData, userSalt);
+        ISilo silo = factory.createSilo(token, recipient, 20 ether, MINIMUM_BUY_AMOUNT, 300, userSalt);
 
         assertEq(address(silo), predicted);
         assertEq(Silo(address(silo)).owner(), creator);
@@ -52,20 +51,17 @@ contract SiloFactoryTest is Test {
     function testIgnoresAuctionDurationForFlatFloor() public {
         IERC20 token = IERC20(address(resource));
         address recipient = makeAddr("recipient");
-        bytes32 appData = keccak256("appData");
         bytes32 userSalt = keccak256("userSalt");
-        address predicted =
-            factory.predictSiloAddress(address(this), token, recipient, 10 ether, 10 ether, 0, appData, userSalt);
+        address predicted = factory.predictSiloAddress(address(this), token, recipient, 10 ether, 10 ether, 0, userSalt);
         assertEq(
-            factory.predictSiloAddress(address(this), token, recipient, 10 ether, 10 ether, 300, appData, userSalt),
-            predicted
+            factory.predictSiloAddress(address(this), token, recipient, 10 ether, 10 ether, 300, userSalt), predicted
         );
 
         vm.expectEmit(true, true, true, true, address(factory));
         emit ISiloFactory.SiloCreated(
-            predicted, address(this), address(token), recipient, 10 ether, 10 ether, 0, appData, userSalt
+            predicted, address(this), address(token), recipient, 10 ether, 10 ether, 0, userSalt
         );
-        ISilo silo = factory.createSilo(token, recipient, 10 ether, 10 ether, 300, appData, userSalt);
+        ISilo silo = factory.createSilo(token, recipient, 10 ether, 10 ether, 300, userSalt);
         assertEq(address(silo), predicted);
         assertEq(silo.auctionDuration(), 0);
     }
@@ -78,5 +74,15 @@ contract SiloFactoryTest is Test {
     function testConstructorRejectsZeroSettlement() public {
         vm.expectRevert(ISiloFactory.ZeroAddress.selector);
         new SiloFactory(ISettlement(address(0)));
+    }
+
+    function testCreatorNamespacesPredictedAddress() public view {
+        address first = factory.predictSiloAddress(
+            address(1), IERC20(address(resource)), address(3), MINIMUM_BUY_AMOUNT, MINIMUM_BUY_AMOUNT, 0, bytes32(0)
+        );
+        address second = factory.predictSiloAddress(
+            address(2), IERC20(address(resource)), address(3), MINIMUM_BUY_AMOUNT, MINIMUM_BUY_AMOUNT, 0, bytes32(0)
+        );
+        assertNotEq(first, second);
     }
 }
