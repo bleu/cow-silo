@@ -15,7 +15,6 @@ interface ISiloFactory {
         address indexed resourceToken,
         address resourceRecipient,
         uint256 minimumBuyAmount,
-        bytes32 appData,
         bytes32 userSalt
     );
 
@@ -27,15 +26,10 @@ interface ISiloFactory {
     /// @param resourceToken The token received by every valid order.
     /// @param resourceRecipient The fixed recipient of the resource token.
     /// @param minimumBuyAmount The initial output floor in the resource token's smallest unit.
-    /// @param appData The app-data hash required in every order.
     /// @param userSalt A caller-scoped CREATE2 salt.
-    function createSilo(
-        IERC20 resourceToken,
-        address resourceRecipient,
-        uint256 minimumBuyAmount,
-        bytes32 appData,
-        bytes32 userSalt
-    ) external returns (ISilo silo);
+    function createSilo(IERC20 resourceToken, address resourceRecipient, uint256 minimumBuyAmount, bytes32 userSalt)
+        external
+        returns (ISilo silo);
 
     /// @notice Predicts the address of a Silo deployment.
     function predictSiloAddress(
@@ -43,7 +37,6 @@ interface ISiloFactory {
         IERC20 resourceToken,
         address resourceRecipient,
         uint256 minimumBuyAmount,
-        bytes32 appData,
         bytes32 userSalt
     ) external view returns (address predicted);
 

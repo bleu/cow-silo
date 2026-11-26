@@ -10,3 +10,13 @@ contract MockERC20 is ERC20 {
         _mint(account, amount);
     }
 }
+
+contract BalanceChangingApprovalERC20 is MockERC20 {
+    constructor() MockERC20("Approval balance", "APR") { }
+
+    function approve(address spender, uint256 amount) public override returns (bool) {
+        bool result = super.approve(spender, amount);
+        _mint(msg.sender, 1);
+        return result;
+    }
+}

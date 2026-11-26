@@ -1,15 +1,16 @@
-import { decodeAbiParameters, getAddress, parseAbiParameters, size } from "viem";
+import { decodeAbiParameters, decodeFunctionData, getAddress, keccak256, maxUint256, parseAbiParameters, size, stringToHex } from "viem";
 import { describe, expect, it } from "vitest";
 
 import {
   BALANCE_ERC20,
-  buildCommitInteraction,
-  buildCommitInteractions,
+  buildAppData,
+  buildPreparationHook,
   buildOrder,
   encodeOrderPayload,
   encodeSolverSignature,
   hashOrder,
   KIND_SELL,
+  siloAbi,
   toSolverJitOrder,
 } from "../src/index.js";
 
@@ -32,6 +33,94 @@ function order() {
     appData,
   });
 }
+
+describe("canonical appData", () => {
+  const vectors = [
+    {
+      silo: "0x00000000000000000000000000000000000000ab",
+      sellToken: "0x00000000000000000000000000000000000000cd",
+      callData: "0xbabed18a00000000000000000000000000000000000000000000000000000000000000cd",
+      document: '{"version":"1.3.0","metadata":{"hooks":{"pre":[{"target":"0x00000000000000000000000000000000000000ab","callData":"0xbabed18a00000000000000000000000000000000000000000000000000000000000000cd","gasLimit":"500000"}]}}}',
+      hash: "0xee2957f4feeb0e935ca682ff1afe936e7bdf5a06392ad586173f4116a9fcea76",
+    },
+    {
+      silo: "0x00000000000000000000000000000000000000ab",
+      sellToken: "0x00000000000000000000000000000000000000ef",
+      callData: "0xbabed18a00000000000000000000000000000000000000000000000000000000000000ef",
+      document: '{"version":"1.3.0","metadata":{"hooks":{"pre":[{"target":"0x00000000000000000000000000000000000000ab","callData":"0xbabed18a00000000000000000000000000000000000000000000000000000000000000ef","gasLimit":"500000"}]}}}',
+      hash: "0x8ba2f9a5d77f6d1be2766857a0f1e2bfacb71269901694d10df84815e25778c2",
+    },
+    {
+      silo: "0x0000000000000000000000000000000000000012",
+      sellToken: "0x00000000000000000000000000000000000000cd",
+      callData: "0xbabed18a00000000000000000000000000000000000000000000000000000000000000cd",
+      document: '{"version":"1.3.0","metadata":{"hooks":{"pre":[{"target":"0x0000000000000000000000000000000000000012","callData":"0xbabed18a00000000000000000000000000000000000000000000000000000000000000cd","gasLimit":"500000"}]}}}',
+      hash: "0x7f64d7a41a78a56583d060d25b6c7d3bffa38035ce56c83bc69dd074c002de22",
+    },
+  ] as const;
+
+  it.each(vectors)("matches exact JSON, calldata, and hash for $silo / $sellToken", (vector) => {
+    const result = buildAppData(vector.silo, vector.sellToken, 500_000n);
+    expect(result).toEqual({
+      document: vector.document,
+      hash: vector.hash,
+      hook: { target: vector.silo, callData: vector.callData, gasLimit: "500000" },
+    });
+    expect(size(result.hook.target)).toBe(20);
+    expect(size(result.hook.callData)).toBe(36);
+    expect(keccak256(stringToHex(vector.document))).toBe(vector.hash);
+  });
+
+  it.each([
+    { hookGasLimit: 600_000n, decimal: "600000", hash: "0xbc735adaef4c18f438c2d6baeefc621df188217f2bb6b606c9a2e4003ecd9436" },
+    {
+      hookGasLimit: maxUint256,
+      decimal: "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+      hash: "0x16c15ab419985a293ad2615b457d711f0ec01fbeaae6ddbac7dce3b15633feb5",
+    },
+  ])("matches the variable gas vector for $decimal", ({ hookGasLimit, decimal, hash }) => {
+    const vector = vectors[0];
+    const result = buildAppData(vector.silo, vector.sellToken, hookGasLimit);
+    expect(result).toEqual({
+      document: vector.document.replace('"500000"', `"${decimal}"`),
+      hash,
+      hook: { target: vector.silo, callData: vector.callData, gasLimit: decimal },
+    });
+    expect(result.hash).not.toBe(vector.hash);
+    expect(buildPreparationHook(vector.silo, vector.sellToken, hookGasLimit)).toEqual(result.hook);
+  });
+
+  it("accepts the smallest nonzero gas limit", () => {
+    expect(buildPreparationHook(silo, sellToken, 1n).gasLimit).toBe("1");
+  });
+
+  it.each([0n, -1n, maxUint256 + 1n])("rejects an invalid hook gas limit of %s", (hookGasLimit) => {
+    expect(() => buildPreparationHook(silo, sellToken, hookGasLimit)).toThrow("hookGasLimit must be a nonzero uint256");
+    expect(() => buildAppData(silo, sellToken, hookGasLimit)).toThrow("hookGasLimit must be a nonzero uint256");
+  });
+
+  it("normalizes checksummed addresses to lowercase", () => {
+    const { silo, sellToken } = vectors[0];
+    expect(buildAppData(getAddress(silo), getAddress(sellToken), 500_000n)).toEqual(buildAppData(silo, sellToken, 500_000n));
+  });
+
+  it("binds the hash to every JSON byte", () => {
+    const { document, hash } = vectors[0];
+    const parsed = JSON.parse(document);
+    const hook = parsed.metadata.hooks.pre[0];
+    const changed = [
+      document + "\n",
+      JSON.stringify(parsed, null, 2),
+      document.replace('"version":"1.3.0"', '"version":"1.3.1"'),
+      document.replace(hook.target, vectors[2].silo),
+      document.replace(hook.callData, vectors[1].callData),
+      document.replace('"500000"', '"500001"'),
+      JSON.stringify({ ...parsed, metadata: { ...parsed.metadata, extra: true } }),
+      JSON.stringify({ ...parsed, metadata: { hooks: { pre: [hook, hook] } } }),
+    ];
+    for (const bytes of changed) expect(keccak256(stringToHex(bytes))).not.toBe(hash);
+  });
+});
 
 describe("Silo SDK", () => {
   it("builds the canonical immutable fields", () => {
@@ -62,18 +151,18 @@ describe("Silo SDK", () => {
     expect(size(signature)).toBe(20 + size(rawPayload));
   });
 
-  it("uses the same hash in the JIT order and commit interaction", () => {
-    const digest = hashOrder(order(), domainSeparator);
-    const interaction = buildCommitInteraction(silo, order(), domainSeparator);
-    expect(digest).toMatch(/^0x[0-9a-f]{64}$/);
-    expect(interaction.target).toBe(silo);
-    expect(interaction.callData).toContain(digest.slice(2));
+  it("hashes the order with its domain separator", () => {
+    expect(hashOrder(order(), domainSeparator)).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(hashOrder(order(), domainSeparator)).not.toBe(hashOrder({ ...order(), buyAmount: 26n }, domainSeparator));
   });
 
-  it("builds independent commit interactions for multiple orders", () => {
-    const interactions = buildCommitInteractions(silo, [order(), order()], domainSeparator);
-    expect(interactions).toHaveLength(2);
-    expect(interactions[0]).toEqual(interactions[1]);
+  it("builds a token-scoped preparation hook", () => {
+    const hook = buildPreparationHook(silo, sellToken, 500_000n);
+    expect(hook.target).toBe(silo);
+    expect(hook.gasLimit).toBe("500000");
+    expect(decodeFunctionData({ abi: siloAbi, data: hook.callData })).toEqual({
+      functionName: "prepare", args: [sellToken],
+    });
   });
 
   it("creates the CoW solver wire format", () => {
