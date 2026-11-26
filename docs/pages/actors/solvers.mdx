@@ -10,7 +10,7 @@ This example uses a viem public `client` and a known `silo` with funding disable
 
 ```ts
 import { getAddress } from "viem";
-import { buildJitTrade, readOrderTermsBatch, siloAbi } from "@cow-silo/sdk";
+import { buildJitTrade, buildOrderDeadlines, readOrderTermsBatch, siloAbi } from "@cow-silo/sdk";
 
 const blockNumber = await client.getBlockNumber();
 const logs = await client.getContractEvents({
@@ -29,7 +29,7 @@ const results = await readOrderTermsBatch(client, { pairs, blockNumber });
 
 ## Quote, build, and simulate
 
-Quote each available pair for its full `sellAmount`. Skip it if the route cannot deliver `minimumBuyAmount` to the recipient. In this example, `solver.quoteBuyAmount`, `solver.buildSettlement`, and `solver.simulate` are functions you supply. The quote returns a `bigint` in buy-token units, or `null` if there is no route.
+Quote each available pair for its full `sellAmount`. Skip it if the route cannot deliver `currentMinimumBuyAmount` to the recipient. In this example, `solver.quoteBuyAmount`, `solver.buildSettlement`, and `solver.simulate` are functions you supply. The quote returns a `bigint` in buy-token units, or `null` if there is no route.
 
 ```ts
 for (const [i, result] of results.entries()) {
@@ -41,20 +41,22 @@ for (const [i, result] of results.entries()) {
 
   const { terms } = result;
   const buyAmount = await solver.quoteBuyAmount(terms);
-  if (buyAmount === null || buyAmount < terms.minimumBuyAmount) continue;
+  if (buyAmount === null || buyAmount < terms.currentMinimumBuyAmount) continue;
 
-  const trade = buildJitTrade(terms, {
-    buyAmount,
-    validTo: Number(terms.blockTimestamp + 300n),
+  const { validTo } = buildOrderDeadlines({
+    blockTimestamp: Number(terms.blockTimestamp),
+    executionWindow: 300,
+    auctionDuration: terms.auctionDuration,
   });
+  const trade = buildJitTrade(terms, { buyAmount, validTo });
   const settlement = await solver.buildSettlement(trade);
   await solver.simulate(settlement);
 }
 ```
 
-Use `jitOrder` and `executedAmount` for the fill-or-kill JIT trade. `appDataDocument` is the exact JSON whose hash is in `jitOrder.appData`. Publish those exact bytes through the CoW appData service before relying on hash lookup. Do not reformat the JSON. `preparationHook` is the document's pre-hook: execute it before signature validation, directly or through the CoW Hooks Trampoline.
+Use `jitOrder` and `executedAmount` for the fill-or-kill JIT trade. Publish the exact `appDataDocument` bytes through the CoW appData service before relying on hash lookup. Execute `preparationHook` directly or through the CoW Hooks Trampoline, then include `preInteraction` so Settlement calls `Silo.commit(order)` directly before signature validation. The trampoline cannot commit. Descending auctions require this exact-order commitment for UID/fill tracking. Flat auctions can validate with preparation alone; the SDK always returns the commit interaction.
 
-The SDK does not publish documents or build the outer trampoline call. Your settlement builder must preserve the hook's target, calldata, and gas limit from the snapshot. The default limit is 500,000; the owner can change it with `setHookGasLimit`. `prepare` is permissionless and also accepts direct Settlement calls. The trampoline ignores failed hook calls, so simulate the full settlement, including signature validation. If the balance, floor, or hook gas limit changed, read the terms again and get a new quote. A hook-gas change changes the appData hash for every sell token, so rebuild the order and publish its new exact document.
+The SDK does not publish documents or build the outer trampoline call. Your settlement builder must preserve the hook's target, calldata, and gas limit from the snapshot. The default limit is 500,000; the owner can change it with `setHookGasLimit`. `prepare` is permissionless and also accepts direct Settlement calls. The trampoline ignores failed hook calls, so simulate the full settlement, including signature validation. If the balance, current minimum, or hook gas limit changed, read the terms again and get a new quote. A hook-gas change changes the appData hash for every sell token, so rebuild the order and publish its new exact document.
 
 ## Funding and simulation
 
@@ -66,6 +68,6 @@ The adapter call has a fixed 200,000 gas cap. Failure and return data are ignore
 
 Preparation does not enforce a later trade or signature validation. Any account can fund and prepare a token without an order or a sale. A successful transaction can therefore leave source inventory in the Silo. All order, minimum-buy, and ERC-1271 checks still apply when the order is validated.
 
-Each token has a separate transient balance snapshot. Repeated preparation for the same token in one transaction returns without funding again. This authorizes any order for that token that meets all policies and matches the prepared and live balances; it does not authorize one exact order hash. Preparation clears when the transaction ends.
+Each token has a separate transient balance snapshot. Repeated preparation reuses it without funding again; `commit` prepares if needed. Use `buildCommitInteractions` for several orders with distinct sell tokens. A later commit for the same token replaces the active hash. Preparation and active commitments clear at transaction end.
 
 The SDK emits the current CoW solver JIT wire format. Your solver still controls the solution graph and interaction placement. An order can execute above its limit; all executed resource-token output goes to the configured recipient.

@@ -33,6 +33,7 @@ jobs:
       - run: forge fmt --check
       - run: FOUNDRY_PROFILE=ci forge test
       - run: TEST_ISOLATED=true forge test --isolate --match-test testPreparationExpiresAfterTransaction
+      - run: TEST_ISOLATED=true forge test --isolate --match-path test/proofs/AuctionClock.t.sol
       - run: pnpm --filter @cow-silo/sdk typecheck
       - run: pnpm --filter @cow-silo/sdk test
       - run: pnpm build

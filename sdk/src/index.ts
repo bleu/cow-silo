@@ -9,7 +9,7 @@ import {
   type Address,
   type Hex,
 } from "viem";
-import { siloAbi } from "./abi.js";
+import { orderParameter, siloAbi } from "./abi.js";
 import type { OrderTerms } from "./reader.js";
 
 export { approvalFundingAdapterAbi, siloAbi } from "./abi.js";
@@ -52,6 +52,12 @@ export type SolverJitOrder = {
   signature: Hex;
 };
 
+export type Interaction = {
+  target: Address;
+  value: "0";
+  callData: Hex;
+};
+
 export type PreparationHook = {
   target: Address;
   callData: Hex;
@@ -65,22 +71,16 @@ export const KIND_SELL =
 export const BALANCE_ERC20 =
   "0x5a28e9363bb942b639270062aa6bb295f434bcdfc42c97267bf003f272060dc9" as const;
 
-const orderTuple = parseAbiParameters(
-  "(address sellToken, address buyToken, address receiver, uint256 sellAmount, uint256 buyAmount, uint32 validTo, bytes32 appData, uint256 feeAmount, bytes32 kind, bool partiallyFillable, bytes32 sellTokenBalance, bytes32 buyTokenBalance) order",
-);
+const orderTuple = parseAbiParameters(orderParameter);
 
 const orderHashParameters = parseAbiParameters(
   "bytes32 typeHash, address sellToken, address buyToken, address receiver, uint256 sellAmount, uint256 buyAmount, uint32 validTo, bytes32 appData, uint256 feeAmount, bytes32 kind, bool partiallyFillable, bytes32 sellTokenBalance, bytes32 buyTokenBalance",
 );
 
+/** Run the canonical prepare hook, then the direct Settlement commit pre-interaction before validation; commit also prepares as a fallback. */
 export function buildJitTrade(terms: OrderTerms, limit: { buyAmount: bigint; validTo: number }) {
-  const { validTo } = limit;
-  if (
-    !Number.isInteger(validTo) || validTo < 0 || validTo > 0xffffffff ||
-    validTo < terms.blockTimestamp || validTo > terms.blockTimestamp + 300n
-  ) {
-    throw new Error("validTo must be within five minutes of the observed block");
-  }
+  const executionDeadline = limit.validTo - terms.auctionDuration;
+  assertExecutionWindow(executionDeadline - Number(terms.blockTimestamp));
 
   const appData = buildAppData(terms.silo, terms.sellToken, terms.hookGasLimit);
   if (appData.hash !== terms.appData.toLowerCase()) {
@@ -92,16 +92,44 @@ export function buildJitTrade(terms: OrderTerms, limit: { buyAmount: bigint; val
     resourceToken: terms.buyToken,
     resourceRecipient: terms.receiver,
     sellAmount: terms.sellAmount,
-    minimumBuyAmount: terms.minimumBuyAmount,
+    currentMinimumBuyAmount: terms.currentMinimumBuyAmount,
     appData: terms.appData,
     ...limit,
   });
   return {
     jitOrder: toSolverJitOrder(terms.silo, order),
     executedAmount: order.sellAmount.toString(),
+    preInteraction: buildCommitInteraction(terms.silo, order),
     appDataDocument: appData.document,
     preparationHook: appData.hook,
   };
+}
+
+function assertUint32(value: number, field: string): void {
+  if (!Number.isSafeInteger(value) || value < 0 || value > 0xffff_ffff) {
+    throw new Error(`${field} must be a uint32 integer`);
+  }
+}
+
+function assertExecutionWindow(seconds: number): void {
+  if (!Number.isSafeInteger(seconds) || seconds < 0 || seconds > 300) {
+    throw new Error("executionWindow must be an integer between 0 and 300 seconds");
+  }
+}
+
+/** Use the chain's block timestamp and the effective duration from Silo.auctionDuration(), in seconds. */
+export function buildOrderDeadlines(input: {
+  blockTimestamp: number;
+  executionWindow: number;
+  auctionDuration: number;
+}): { executionDeadline: number; validTo: number } {
+  assertExecutionWindow(input.executionWindow);
+  assertUint32(input.blockTimestamp, "blockTimestamp");
+  assertUint32(input.auctionDuration, "auctionDuration");
+  const executionDeadline = input.blockTimestamp + input.executionWindow;
+  const validTo = executionDeadline + input.auctionDuration;
+  assertUint32(validTo, "validTo");
+  return { executionDeadline, validTo };
 }
 
 export function buildOrder(input: {
@@ -110,14 +138,18 @@ export function buildOrder(input: {
   resourceRecipient: Address;
   sellAmount: bigint;
   buyAmount: bigint;
-  minimumBuyAmount: bigint;
+  /** Read currentMinimumBuyAmount(sellToken) from this Silo. */
+  currentMinimumBuyAmount: bigint;
   validTo: number;
   appData: Hex;
 }): SiloOrder {
+  assertUint32(input.validTo, "validTo");
   if (input.sellAmount <= 0n) throw new Error("sellAmount must be positive");
-  if (input.minimumBuyAmount <= 0n) throw new Error("minimumBuyAmount must be positive");
-  if (input.buyAmount < input.minimumBuyAmount) {
-    throw new Error("buyAmount must be at least minimumBuyAmount");
+  if (typeof input.currentMinimumBuyAmount !== "bigint" || input.currentMinimumBuyAmount <= 0n) {
+    throw new Error("currentMinimumBuyAmount must be a positive bigint");
+  }
+  if (input.buyAmount < input.currentMinimumBuyAmount) {
+    throw new Error("buyAmount must be at least currentMinimumBuyAmount");
   }
   if (input.sellToken.toLowerCase() === input.resourceToken.toLowerCase()) {
     throw new Error("sellToken must differ from resourceToken");
@@ -169,6 +201,33 @@ export function hashOrder(order: SiloOrder, domainSeparator: Hex): Hex {
     ]),
   );
   return keccak256(concatHex(["0x1901", domainSeparator, structHash]));
+}
+
+/** Call directly from Settlement, not through the hooks trampoline. */
+export function buildCommitInteraction(silo: Address, order: SiloOrder): Interaction {
+  return {
+    target: silo,
+    value: "0",
+    callData: encodeFunctionData({
+      abi: siloAbi,
+      functionName: "commit",
+      args: [order],
+    }),
+  };
+}
+
+/** Builds one direct Settlement pre-interaction for each independent Silo order. */
+export function buildCommitInteractions(
+  silo: Address,
+  orders: readonly SiloOrder[],
+): Interaction[] {
+  const sellTokens = new Set<string>();
+  return orders.map((order) => {
+    const token = order.sellToken.toLowerCase();
+    if (sellTokens.has(token)) throw new Error(`duplicate sellToken: ${order.sellToken}`);
+    sellTokens.add(token);
+    return buildCommitInteraction(silo, order);
+  });
 }
 
 /** Anyone can invoke the hook directly or through the standard CoW trampoline. */

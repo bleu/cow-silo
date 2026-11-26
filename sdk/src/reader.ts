@@ -8,6 +8,8 @@ export type OrderTerms = SiloPair & {
   receiver: Address;
   sellAmount: bigint;
   minimumBuyAmount: bigint;
+  currentMinimumBuyAmount: bigint;
+  auctionDuration: number;
   hookGasLimit: bigint;
   appData: Hex;
   domainSeparator: Hex;
@@ -21,10 +23,10 @@ export type OrderTermsResult =
   | { status: "error"; error: Error };
 
 type ReaderClient = Pick<PublicClient, "getBlock" | "multicall">;
-type SiloField = "resourceToken" | "resourceRecipient" | "domainSeparator" | "minimumBuyAmount" | "hookGasLimit";
+type SiloField = "resourceToken" | "resourceRecipient" | "domainSeparator" | "minimumBuyAmount" | "auctionDuration" | "hookGasLimit";
 type ReadCall =
   | { address: Address; abi: typeof siloAbi; functionName: SiloField }
-  | { address: Address; abi: typeof siloAbi; functionName: "appData"; args: readonly [Address] }
+  | { address: Address; abi: typeof siloAbi; functionName: "appData" | "currentMinimumBuyAmount"; args: readonly [Address] }
   | { address: Address; abi: typeof erc20Abi; functionName: "balanceOf"; args: readonly [Address] };
 
 export async function readOrderTermsBatch(
@@ -55,6 +57,8 @@ export async function readOrderTermsBatch(
       appData: enqueue({ address: silo, abi: siloAbi, functionName: "appData", args: [sellToken] }),
       domainSeparator: field("domainSeparator"),
       minimumBuyAmount: field("minimumBuyAmount"),
+      auctionDuration: field("auctionDuration"),
+      currentMinimumBuyAmount: enqueue({ address: silo, abi: siloAbi, functionName: "currentMinimumBuyAmount", args: [sellToken] }),
       hookGasLimit: field("hookGasLimit"),
       sellAmount: enqueue({ address: sellToken, abi: erc20Abi, functionName: "balanceOf", args: [silo] }),
     };
@@ -85,6 +89,8 @@ export async function readOrderTermsBatch(
       if (pair.sellToken === zeroAddress) throw new Error("sellToken must not be the zero address");
       const buyToken = hexAt(row.buyToken);
       if (buyToken.toLowerCase() === pair.sellToken.toLowerCase()) return { status: "empty" };
+      const auctionDuration = valueAt(row.auctionDuration);
+      if (typeof auctionDuration !== "number") throw new Error("Expected an auction duration");
       const terms: OrderTerms = {
         ...pair,
         buyToken,
@@ -92,6 +98,8 @@ export async function readOrderTermsBatch(
         appData: hexAt(row.appData),
         domainSeparator: hexAt(row.domainSeparator),
         minimumBuyAmount: amountAt(row.minimumBuyAmount),
+        currentMinimumBuyAmount: amountAt(row.currentMinimumBuyAmount),
+        auctionDuration,
         hookGasLimit: amountAt(row.hookGasLimit),
         sellAmount: amountAt(row.sellAmount),
         blockNumber: block.number,

@@ -2,7 +2,7 @@
 
 ## Silo
 
-`Silo` is an ERC-1271 order owner. Most order rules are immutable. A two-step owner can change the minimum buy amount, hook gas limit, and funding adapter.
+`Silo` is an ERC-1271 order owner. Most order rules are immutable. A two-step owner can change the hook gas limit and funding adapter.
 
 Permanent values:
 
@@ -10,10 +10,10 @@ Permanent values:
 - CoW Vault Relayer.
 - Resource token and recipient.
 - AppData JSON shape and hook target.
+- Initial buy amount, minimum buy amount (floor), and auction duration.
 
 Managed values:
 
-- Minimum buy amount, denominated in the resource token's smallest unit.
 - Hook gas limit, initially 500,000. Zero is not valid.
 - Funding adapter, initially the zero address. The owner can replace it or set it to zero to disable funding.
 
@@ -23,7 +23,7 @@ Main functions:
 
 | Function | Caller | Result |
 | --- | --- | --- |
-| `setMinimumBuyAmount(amount)` | Owner only | Changes the resource-denominated execution floor. Zero is not valid. |
+| `currentMinimumBuyAmount(sellToken)` | Any account | Returns the current minimum payment for this sell token's full balance. |
 | `setHookGasLimit(gasLimit)` | Owner only | Changes the appData pre-hook gas limit. Zero is not valid. Emits `HookGasLimitSet`. |
 | `hookGasLimit()` | Any account | Returns the current pre-hook gas limit. |
 | `setFundingAdapter(adapter)` | Owner only | Replaces or disables the funding adapter. Emits `FundingAdapterSet`. |
@@ -32,10 +32,14 @@ Main functions:
 | `appData(sellToken)` | Any account | Returns the complete fixed-document hash for this Silo and sell token. |
 | `prepare(sellToken)` | Any account | Attempts funding, approves the Vault Relayer, and records the resulting nonzero balance for this transaction. No order or later trade is required. |
 | `preparedBalance(sellToken)` | Any account | Returns the prepared balance, or zero if not prepared in this transaction. |
-| `isValidSignature(hash, signature)` | Any account | Checks the order hash, prepared balance, live balance, and all order rules through ERC-1271. |
+| `commit(order)` | Settlement only | Prepares the token if needed, checks the order, registers its UID for fill tracking, and replaces the active commitment for this sell token. |
+| `isCommitted(orderHash)` | Any account | Reports whether the order has an active commitment in this transaction. |
+| `isValidSignature(hash, signature)` | Any account | Checks the hash, prepared and live balances, and order rules. Descending auctions also require the active commitment. |
 | `verify(order)` | Any account | Checks the Silo order rules and current minimum without requiring preparation. |
 
 Preparation is token-scoped. The first successful call records a balance; further calls for the same token return without funding again. Signature validation requires the order amount to equal both this snapshot and the current full balance. Different tokens use separate transient slots. The slots clear at transaction end.
+
+Flat auctions can validate with preparation alone. Descending auctions require a direct Settlement `commit(order)` pre-interaction before validation. The appData hook only prepares the token; the trampoline cannot commit. A commit after preparation reuses the snapshot without funding again. Only a full sale restarts that token's [auction clock](/how-it-works#competition).
 
 The appData template contains one pre-hook targeting this Silo, with calldata for `prepare(sellToken)` and the current `hookGasLimit` as a decimal string. The Silo rebuilds and hashes the complete document. It accepts no arbitrary appData input. Changing the limit changes the expected hash for every sell token. See the exact JSON format in the [SDK reference](/developers/sdk).
 
@@ -51,7 +55,7 @@ The resulting Silo balance must be nonzero. Signature validation later requires 
 
 `SiloFactory` fixes its Settlement at deployment. The factory uses CREATE2. The owner address and user salt define the deployment salt. The caller becomes the initial Silo owner. The factory emits a `SiloCreated` event for discovery.
 
-Creation and address prediction take the resource token, recipient, minimum buy amount, and user salt. Neither takes appData: the deployed Silo derives it from its own address and the order's sell token. This avoids a circular dependency between appData and the CREATE2 address. Adapter configuration remains a separate owner call after deployment.
+Creation and address prediction take the resource token, recipient, initial buy amount, floor, auction duration, and user salt. Neither takes appData: the deployed Silo derives it from its own address and the order's sell token. This avoids a circular dependency between appData and the CREATE2 address. Adapter configuration remains a separate owner call after deployment.
 
 The factory cannot change a Silo or move its funds. Changed creation code and constructor inputs change CREATE2 predictions. Existing deployed Silo instances are not upgraded.
 

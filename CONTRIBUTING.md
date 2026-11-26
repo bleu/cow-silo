@@ -8,6 +8,7 @@ pnpm install --frozen-lockfile
 forge fmt --check
 forge test
 TEST_ISOLATED=true forge test --isolate --match-test testPreparationExpiresAfterTransaction
+TEST_ISOLATED=true forge test --isolate --match-path test/proofs/AuctionClock.t.sol
 pnpm --filter @cow-silo/sdk typecheck
 pnpm --filter @cow-silo/sdk test
 pnpm --filter @cow-silo/docs build

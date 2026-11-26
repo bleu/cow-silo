@@ -8,7 +8,7 @@ Silo can convert many fee tokens into one treasury token. The protocol does not 
 
 1. Select the resource token.
 2. Select a treasury or deploy a Burner.
-3. Select a non-zero minimum buy amount in the resource token.
+3. Select the initial buy amount, floor, and [auction duration](/how-it-works#competition).
 4. Select a factory with the trusted Settlement.
 5. Deploy a Silo through `SiloFactory`.
 6. Send fee tokens to the Silo or configure optional adapter funding.
@@ -37,8 +37,8 @@ A limit update changes the expected appData hash for every sell token. Solvers m
 
 ## Minimum buy amount
 
-The Silo rejects orders whose `buyAmount` is below `minimumBuyAmount`. The value uses the resource token's smallest unit. For example, a USDC Silo can require a minimum USDC output, and a COW Silo can require a minimum COW output.
+The Silo rejects orders whose `buyAmount` is below `currentMinimumBuyAmount(sellToken)`. The value uses the resource token's smallest unit. For example, a USDC Silo can require a minimum USDC output, and a COW Silo can require a minimum COW output.
 
 The minimum applies to each full-balance order. It is not a USD value unless the resource token is a USD-denominated token. It is also not a fair-price oracle. CoW solver competition determines execution value above the minimum.
 
-The two-step owner can update the minimum. An update does not change the Silo address or its other order rules. Small balances remain in the Silo until a solver can meet the current minimum.
+New deposits increase the amount sold without raising the required payment. To change the auction settings, deploy a new Silo. Small balances remain in the Silo until a solver can meet the current minimum.

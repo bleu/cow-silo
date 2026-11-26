@@ -35,7 +35,6 @@ interface IMainnetSettlement is ISettlement {
     ) external;
 
     function authenticator() external view returns (ISolverAuthenticator);
-    function filledAmount(bytes calldata orderUid) external view returns (uint256);
 }
 
 interface ISolverAuthenticator {

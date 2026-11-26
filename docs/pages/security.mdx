@@ -9,7 +9,7 @@ The Silo enforces these rules:
 - The receiver is the fixed resource recipient.
 - The sell amount equals the complete current balance.
 - The buy amount meets the current resource-denominated minimum.
-- The order expires in five minutes or less.
+- The execution deadline is at most five minutes ahead. CoW `validTo` also includes the auction duration.
 - The appData hash matches the complete canonical JSON document for this Silo, sell token, and current hook gas limit.
 - The fee is zero.
 - The order is a fill-or-kill sell order.
@@ -17,15 +17,15 @@ The Silo enforces these rules:
 - The token was prepared in the same transaction.
 - The order's sell amount equals the prepared balance and the current full balance.
 
-Preparation uses a separate transient balance snapshot for each token. Repeated preparation for the same token returns without funding again. Preparation permits any order that matches this snapshot and all order rules. The slots clear at transaction end.
+Preparation uses a separate transient balance snapshot for each token. Repeated preparation returns without funding again. Descending auctions also require an active exact-order commitment from Settlement in the same transaction. A later commit for the same sell token replaces the first. The commit registers the UID for persistent fill tracking; preparation alone cannot track a sale. Flat auctions can validate with preparation alone. Transient slots clear at transaction end.
 
 `prepare` is permissionless. Any account can trigger optional funding into the fixed Silo without an order or a later trade. Source approvals must permit this transfer. Order hash, amount, recipient, and other policy checks still apply when an order is validated.
 
 ## Administrative control
 
-The Silo uses two-step ownership. The owner can change `minimumBuyAmount` and `hookGasLimit`, and replace or disable `fundingAdapter`. A zero minimum or hook gas limit is not valid. The owner cannot change the resource token, recipient, Settlement contract, Vault Relayer, or appData JSON shape. The owner cannot withdraw fee tokens.
+The Silo uses two-step ownership. The owner can change `hookGasLimit` and replace or disable `fundingAdapter`. A zero hook gas limit is not valid. The auction settings, resource token, recipient, Settlement contract, Vault Relayer, and appData JSON shape are immutable. The owner cannot withdraw fee tokens.
 
-Renouncing ownership permanently freezes the current minimum, hook gas limit, and adapter configuration. A production protocol should use its standard governance controls as the owner.
+Renouncing ownership permanently freezes the hook gas limit and adapter configuration. A production protocol should use its standard governance controls as the owner.
 
 ## Optional funding
 
@@ -45,7 +45,7 @@ The document specifies exactly one `prepare(sellToken)` pre-hook, this Silo as t
 
 A gas-limit update changes the expected appData hash for every sell token. Old documents are rejected while the limit differs. Restoring a previous value can make its documents valid again, subject to the other order checks. The setter is not permanent order cancellation. Low limits can make the hook fail; large limits can exceed solver or transaction gas constraints. The owner must test the chosen budget. The separate funding-adapter cap stays at 200,000.
 
-A correct hash proves which document an order uses. It does not publish the document or execute the hook. Solvers must obtain the exact document and execute its hook before signature validation, directly or through the CoW Hooks Trampoline. The trampoline ignores hook failures. An order without a successful preparation snapshot fails ERC-1271 validation.
+A correct hash proves which document an order uses. It does not publish the document or execute the hook. Solvers must obtain the exact document and execute its hook before signature validation, directly or through the CoW Hooks Trampoline. The trampoline ignores hook failures and cannot call `commit`; that call must come directly from Settlement. Missing preparation fails ERC-1271 validation, as does a missing active commitment for a descending auction.
 
 ## Required external controls
 

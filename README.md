@@ -39,14 +39,16 @@ flowchart LR
 1. A protocol sends fee tokens to a Silo or configures an optional funding adapter.
 2. Solvers read the Silo balance and any expected adapter funding.
 3. Each solver reads the current minimum buy amount and builds a JIT order at or above that value.
-4. The order's appData specifies `Silo.prepare(sellToken)` as a pre-hook. The solver executes it before signature validation, directly or through the CoW Hooks Trampoline.
+4. The solver executes the appData `prepare(sellToken)` hook, directly or through the CoW Hooks Trampoline, then adds a direct Settlement `Silo.commit(order)` pre-interaction. Both run before signature validation.
 5. CoW Protocol scores the solutions.
 6. The winning settlement sells the full token balance.
 7. The settlement sends the resource token to the fixed recipient.
 
-The Silo checks the token pair, recipient, full balance after funding, minimum buy amount, expiry, app data, fee, order kind, and balance type. The minimum is denominated in the resource token. It is an execution floor, not a market-price oracle. The owner can update the minimum and hook gas limit, and replace or disable the funding adapter. CoW competition is the price-discovery mechanism.
+The Silo checks the token pair, recipient, full balance after funding, minimum buy amount, expiry, app data, fee, order kind, and balance type. The minimum is denominated in the resource token. It is an execution floor, not a market-price oracle. Each sell token has its own [auction clock](./docs/pages/how-it-works.mdx#competition). The auction settings are immutable. The owner can change the hook gas limit and replace or disable the funding adapter. CoW competition is the price-discovery mechanism.
 
 Funding is disabled by default. The owner can enable it with `setFundingAdapter`. Any account can call `prepare`; a call does not require an order or a later sale. During `prepare`, the Silo attempts `fund(sellToken)` with a fixed 200,000 gas cap. It ignores adapter failure and return data, approves the Vault Relayer, and records the resulting nonzero balance for this transaction. Repeated preparation for the same token reuses that balance without funding again. Signature validation requires the order amount to equal both the recorded amount and the current full balance.
+
+Descending auctions also require an active order commitment from Settlement. `commit` registers the order UID for fill tracking and prepares the token if needed; it does not fund again after successful preparation. Flat auctions can validate with preparation alone. The SDK always supplies the commit pre-interaction.
 
 The appData document has a fixed JSON shape and Silo target. It includes the calldata for `prepare(sellToken)` and the current `hookGasLimit`, which defaults to 500,000. The owner can change the limit with `setHookGasLimit`; zero is not valid. The Silo rebuilds the document and checks its complete hash. A gas-limit change requires a new exact document and hash for each sell token. The SDK returns the document for publication; a hash alone does not give solvers the hook. See the [solver guide](./docs/pages/actors/solvers.mdx).
 
@@ -89,7 +91,7 @@ forge script script/DeploySilo.s.sol:DeploySilo \
   --rpc-url "$RPC_URL" --broadcast --verify
 ```
 
-Set `MINIMUM_BUY_AMOUNT` in the resource token's smallest unit. Use the Burner address as `RESOURCE_RECIPIENT` when the resource token must leave circulation. Deploy the Burner first.
+Set `INITIAL_BUY_AMOUNT` and `MINIMUM_BUY_AMOUNT` in the resource token's smallest unit. Set `AUCTION_DURATION` in seconds. Use the Burner address as `RESOURCE_RECIPIENT` when the resource token must leave circulation. Deploy the Burner first.
 
 No official Silo deployment exists. See [the deployment registry](./deployments/addresses.json).
 

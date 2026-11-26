@@ -16,9 +16,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildAppData,
+  buildCommitInteraction,
   buildPreparationHook,
   buildJitTrade,
   buildOrder,
+  siloAbi,
   readOrderTerms,
   readOrderTermsBatch,
   toSolverJitOrder,
@@ -39,7 +41,7 @@ const brokenToken = "0x9999999999999999999999999999999999999999";
 const pair = { silo, sellToken } as const;
 const terms = {
   ...pair, buyToken, receiver, sellAmount: 100n, minimumBuyAmount: 10n,
-  appData, hookGasLimit, domainSeparator, blockNumber, blockTimestamp,
+  currentMinimumBuyAmount: 25n, auctionDuration: 600, appData, hookGasLimit, domainSeparator, blockNumber, blockTimestamp,
 } as const;
 
 const readAbi = parseAbi([
@@ -47,6 +49,8 @@ const readAbi = parseAbi([
   "function resourceToken() view returns (address)",
   "function resourceRecipient() view returns (address)",
   "function minimumBuyAmount() view returns (uint256)",
+  "function currentMinimumBuyAmount(address) view returns (uint256)",
+  "function auctionDuration() view returns (uint32)",
   "function hookGasLimit() view returns (uint256)",
   "function appData(address) view returns (bytes32)",
   "function domainSeparator() view returns (bytes32)",
@@ -58,14 +62,15 @@ type RpcRequest =
 
 type ReadValues = Partial<Record<Address, bigint | "revert">>;
 
-function testChain({ balances = {}, floors = {}, gasLimits = {} }: {
+function testChain({ balances = {}, floors = {}, quotes = {}, gasLimits = {} }: {
   balances?: ReadValues;
   floors?: ReadValues;
+  quotes?: Partial<Record<Address, ReadValues>>;
   gasLimits?: ReadValues;
 } = {}) {
   const state = { latest: blockNumber };
   const blocks: string[] = [];
-  const reads: { block: string; target: Address; getter: string; owner?: Address }[] = [];
+  const reads: { block: string; target: Address; getter: string; arg?: Address }[] = [];
   const client = createPublicClient({
     chain: mainnet,
     transport: custom({
@@ -82,15 +87,20 @@ function testChain({ balances = {}, floors = {}, gasLimits = {} }: {
         if (aggregate.functionName !== "aggregate3") throw new Error(`Unexpected multicall: ${aggregate.functionName}`);
         const result = aggregate.args[0].map(({ target, callData }) => {
           const { functionName, args } = decodeFunctionData({ abi: readAbi, data: callData });
-          reads.push({ block, target, getter: functionName, owner: args?.[0] });
+          const arg = args?.[0];
+          reads.push({ block, target, getter: functionName, arg });
           const number = block === "latest" ? state.latest : BigInt(block);
+          const floor = floors[target] ?? 10n;
+          const liveMinimum = target === otherSilo ? floor : (number === blockNumber ? 25n : 20n);
           const gasLimit = gasLimits[target] ?? (number === blockNumber ? hookGasLimit : 600_000n);
           const values = {
             resourceToken: buyToken,
             resourceRecipient: receiver,
-            minimumBuyAmount: floors[target] ?? (number === blockNumber ? 10n : 14n),
+            minimumBuyAmount: floor,
+            currentMinimumBuyAmount: (arg && quotes[target]?.[arg]) ?? liveMinimum,
+            auctionDuration: target === otherSilo ? 0 : 600,
             hookGasLimit: gasLimit,
-            appData: buildAppData(target, args?.[0] ?? sellToken, gasLimit === "revert" ? hookGasLimit : gasLimit).hash,
+            appData: buildAppData(target, arg ?? sellToken, gasLimit === "revert" ? hookGasLimit : gasLimit).hash,
             domainSeparator,
             balanceOf: balances[target] ?? (number === blockNumber ? 100n : 73n),
           } as const;
@@ -106,7 +116,7 @@ function testChain({ balances = {}, floors = {}, gasLimits = {} }: {
 }
 
 describe("readOrderTerms", () => {
-  it("reads inventory, floor, hook gas, and appData at the same block", async () => {
+  it("reads inventory, live minimum, immutable floor, duration, hook gas, and appData at the same block", async () => {
     const { client, state, reads, blocks } = testChain();
     expect(await readOrderTerms(client, pair)).toEqual(terms);
 
@@ -114,7 +124,7 @@ describe("readOrderTerms", () => {
     expect(await readOrderTerms(client, pair)).toEqual({
       ...terms,
       sellAmount: 73n,
-      minimumBuyAmount: 14n,
+      currentMinimumBuyAmount: 20n,
       hookGasLimit: 600_000n,
       appData: buildAppData(silo, sellToken, 600_000n).hash,
       blockNumber: blockNumber + 1n,
@@ -139,17 +149,23 @@ describe("readOrderTerms", () => {
 });
 
 describe("readOrderTermsBatch", () => {
-  it("reads each Silo configuration and pair balance once, even for repeated pairs", async () => {
+  it("reads each Silo configuration and each pair's balance, live minimum, and appData once", async () => {
     const { client, reads, blocks, state } = testChain({
-      balances: { [otherToken]: 35n }, floors: { [otherSilo]: 8n }, gasLimits: { [otherSilo]: maxUint256 },
+      balances: { [otherToken]: 35n },
+      floors: { [otherSilo]: 8n },
+      quotes: { [silo]: { [otherToken]: 17n }, [otherSilo]: { [sellToken]: 8n } },
+      gasLimits: { [otherSilo]: maxUint256 },
     });
     state.latest += 1n;
     const pairs = [{ silo, sellToken: otherToken }, { silo: otherSilo, sellToken }, pair, pair] as const;
     const result = await readOrderTermsBatch(client, { pairs, blockNumber });
     expect(result).toEqual([
-      { status: "available", terms: { ...terms, sellToken: otherToken, sellAmount: 35n, appData: buildAppData(silo, otherToken, hookGasLimit).hash } },
       { status: "available", terms: {
-        ...terms, silo: otherSilo, minimumBuyAmount: 8n, hookGasLimit: maxUint256,
+        ...terms, sellToken: otherToken, sellAmount: 35n, currentMinimumBuyAmount: 17n,
+        appData: buildAppData(silo, otherToken, hookGasLimit).hash,
+      } },
+      { status: "available", terms: {
+        ...terms, silo: otherSilo, minimumBuyAmount: 8n, currentMinimumBuyAmount: 8n, auctionDuration: 0, hookGasLimit: maxUint256,
         appData: buildAppData(otherSilo, sellToken, maxUint256).hash,
       } },
       { status: "available", terms },
@@ -158,16 +174,21 @@ describe("readOrderTermsBatch", () => {
     expect(blocks).toEqual([numberToHex(blockNumber)]);
     expect(new Set(reads.map(({ block }) => block))).toEqual(new Set([numberToHex(blockNumber)]));
     for (const address of [silo, otherSilo]) {
-      expect(reads.filter(({ target, getter }) => target === address && getter !== "appData").map(({ getter }) => getter).sort()).toEqual([
-        "domainSeparator", "hookGasLimit", "minimumBuyAmount", "resourceRecipient", "resourceToken",
+      expect(reads.filter(({ target, arg }) => target === address && arg === undefined).map(({ getter }) => getter).sort()).toEqual([
+        "auctionDuration", "domainSeparator", "hookGasLimit", "minimumBuyAmount", "resourceRecipient", "resourceToken",
       ]);
     }
-    const appDataReads = reads.filter(({ getter }) => getter === "appData").map(({ target, owner }) => [target, owner]);
-    expect(appDataReads).toHaveLength(3);
-    expect(appDataReads).toEqual(expect.arrayContaining([[silo, otherToken], [otherSilo, sellToken], [silo, sellToken]]));
-    const balances = reads.filter(({ getter }) => getter === "balanceOf").map(({ target, owner }) => [target, owner]);
-    expect(balances).toHaveLength(3);
-    expect(balances).toEqual(expect.arrayContaining([[otherToken, silo], [sellToken, otherSilo], [sellToken, silo]]));
+    const targetsAndArgs = (name: string) => reads.filter(({ getter }) => getter === name).map(({ target, arg }) => [target, arg]);
+    expect(targetsAndArgs("balanceOf")).toEqual([[otherToken, silo], [sellToken, otherSilo], [sellToken, silo]]);
+    expect(targetsAndArgs("currentMinimumBuyAmount")).toEqual([[silo, otherToken], [otherSilo, sellToken], [silo, sellToken]]);
+    expect(targetsAndArgs("appData")).toEqual([[silo, otherToken], [otherSilo, sellToken], [silo, sellToken]]);
+  });
+
+  it("limits a failed live minimum read to its Silo and sell token", async () => {
+    const { client } = testChain({ quotes: { [silo]: { [otherToken]: "revert" } } });
+    expect(await readOrderTermsBatch(client, { pairs: [{ silo, sellToken: otherToken }, pair] })).toEqual([
+      { status: "error", error: expect.any(Error) }, { status: "available", terms },
+    ]);
   });
 
   it("keeps a hook gas read failure local to its Silo", async () => {
@@ -198,24 +219,45 @@ describe("readOrderTermsBatch", () => {
 });
 
 describe("buildJitTrade", () => {
-  it("returns the publication document and its preparation hook with the JIT order", () => {
-    const limit = { buyAmount: 25n, validTo: Number(blockTimestamp) + 120 };
+  it("returns the observed balance, wire expiry, commit, publication document, and preparation hook", () => {
+    const limit = { buyAmount: 25n, validTo: Number(blockTimestamp) + terms.auctionDuration + 120 };
     const order = buildOrder({
       sellToken, resourceToken: buyToken, resourceRecipient: receiver, sellAmount: 100n,
-      minimumBuyAmount: 10n, appData, ...limit,
+      currentMinimumBuyAmount: terms.currentMinimumBuyAmount, appData, ...limit,
     });
     expect(buildJitTrade(terms, limit)).toEqual({
       jitOrder: toSolverJitOrder(silo, order),
       executedAmount: "100",
+      preInteraction: buildCommitInteraction(silo, order),
       appDataDocument: buildAppData(silo, sellToken, hookGasLimit).document,
       preparationHook: buildPreparationHook(silo, sellToken, hookGasLimit),
+    });
+  });
+
+  describe.each([
+    ["flat", { ...terms, auctionDuration: 0, currentMinimumBuyAmount: terms.minimumBuyAmount }],
+    ["descending", terms],
+  ] as const)("%s auction", (_, observed) => {
+    const earliest = Number(blockTimestamp) + observed.auctionDuration;
+    const buyAmount = observed.currentMinimumBuyAmount;
+
+    it.each([0, 300])("accepts an execution deadline %s seconds after the block", (seconds) => {
+      const validTo = earliest + seconds;
+      const trade = buildJitTrade(observed, { buyAmount, validTo });
+      expect(trade.jitOrder.validTo).toBe(validTo);
+      expect(decodeFunctionData({ abi: siloAbi, data: trade.preInteraction.callData }).functionName).toBe("commit");
+      expect(decodeFunctionData({ abi: siloAbi, data: trade.preparationHook.callData })).toEqual({ functionName: "prepare", args: [sellToken] });
+    });
+
+    it.each([-1, 301, 0.5])("rejects an execution deadline offset of %s seconds", (seconds) => {
+      expect(() => buildJitTrade(observed, { buyAmount, validTo: earliest + seconds })).toThrow();
     });
   });
 
   it.each([600_000n, maxUint256])("uses the observed hook gas limit of %s", (hookGasLimit) => {
     const canonical = buildAppData(silo, sellToken, hookGasLimit);
     const result = buildJitTrade({ ...terms, hookGasLimit, appData: canonical.hash }, {
-      buyAmount: 10n, validTo: Number(blockTimestamp),
+      buyAmount: 25n, validTo: Number(blockTimestamp) + terms.auctionDuration,
     });
     expect(result.appDataDocument).toBe(canonical.document);
     expect(result.preparationHook.gasLimit).toBe(hookGasLimit.toString());
@@ -224,38 +266,29 @@ describe("buildJitTrade", () => {
 
   it("rejects the old document after the observed gas limit changes", () => {
     expect(() => buildJitTrade({ ...terms, hookGasLimit: 600_000n }, {
-      buyAmount: 10n, validTo: Number(blockTimestamp),
+      buyAmount: 25n, validTo: Number(blockTimestamp) + terms.auctionDuration,
     })).toThrow("appData must match");
   });
 
   it.each([0n, -1n, maxUint256 + 1n])("rejects invalid observed hook gas of %s", (hookGasLimit) => {
     expect(() => buildJitTrade({ ...terms, hookGasLimit }, {
-      buyAmount: 10n, validTo: Number(blockTimestamp),
+      buyAmount: 25n, validTo: Number(blockTimestamp) + terms.auctionDuration,
     })).toThrow("hookGasLimit must be a nonzero uint256");
   });
 
   it("rejects an appData hash for a different pair", () => {
     const wrongTerms = { ...terms, appData: buildAppData(silo, otherToken, hookGasLimit).hash };
-    expect(() => buildJitTrade(wrongTerms, { buyAmount: 10n, validTo: Number(blockTimestamp) })).toThrow("appData must match");
+    expect(() => buildJitTrade(wrongTerms, { buyAmount: 25n, validTo: Number(blockTimestamp) + terms.auctionDuration })).toThrow("appData must match");
   });
 
-  it("accepts both ends of the five-minute validity window for the observed block", () => {
-    for (const seconds of [0, 300]) {
-      const validTo = Number(blockTimestamp) + seconds;
-      expect(buildJitTrade(terms, { buyAmount: 10n, validTo }).jitOrder.validTo).toBe(validTo);
-    }
+  it("rejects a wire expiry that exceeds uint32 even if the execution deadline is valid", () => {
+    const validTo = 0x1_0000_0000;
+    const nearRollover = { ...terms, blockTimestamp: BigInt(validTo - terms.auctionDuration) };
+    expect(() => buildJitTrade(nearRollover, { buyAmount: 25n, validTo })).toThrow();
   });
 
-  it.each([-1, 301, 0.5])("rejects an expiry offset of %s seconds", (seconds) => {
-    expect(() => buildJitTrade(terms, { buyAmount: 10n, validTo: Number(blockTimestamp) + seconds })).toThrow();
-  });
-
-  it("rejects an expiry that fits the time window but exceeds uint32", () => {
-    const nearRollover = { ...terms, blockTimestamp: 0xffff_fffen };
-    expect(() => buildJitTrade(nearRollover, { buyAmount: 10n, validTo: 0x1_0000_0000 })).toThrow();
-  });
-
-  it("rejects a buy amount below the observed floor", () => {
-    expect(() => buildJitTrade(terms, { buyAmount: 9n, validTo: Number(blockTimestamp) })).toThrow();
+  it("rejects a buy amount at the static floor but below the live minimum", () => {
+    const validTo = Number(blockTimestamp) + terms.auctionDuration;
+    expect(() => buildJitTrade(terms, { buyAmount: terms.minimumBuyAmount, validTo })).toThrow();
   });
 });

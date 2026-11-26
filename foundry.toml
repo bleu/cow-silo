@@ -10,7 +10,10 @@ optimizer = true
 optimizer_runs = 20_000
 bytecode_hash = "none"
 cbor_metadata = false
-fs_permissions = [{ access = "read-write", path = "./deployments" }]
+fs_permissions = [
+    { access = "read-write", path = "./deployments" },
+    { access = "read", path = "./lib/cowprotocol-contracts/deployments/mainnet/GPv2Settlement.json" },
+]
 
 [profile.mainnet]
 test = "integration/mainnet"

@@ -33,6 +33,7 @@ contract SiloSettlementTest is Test {
     address internal recipient = makeAddr("recipient");
     Silo internal silo;
     ApprovalFundingAdapter internal adapter;
+    bool internal omitRegistration;
 
     function setUp() public {
         vm.createSelectFork(vm.envOr("MAINNET_RPC_URL", PUBLIC_RPC), vm.envOr("MAINNET_FORK_BLOCK", FORK_BLOCK));
@@ -47,7 +48,7 @@ contract SiloSettlementTest is Test {
         assertTrue(SETTLEMENT.authenticator().isSolver(SOLVER), "Fixture solver is not authorized");
         assertGe(USDC.balanceOf(USDC_HOLDER), 3 * SELL_AMOUNT, "Fixture holder needs USDC");
 
-        silo = new Silo(SETTLEMENT, CoWIERC20(address(WETH)), recipient, BUY_AMOUNT, address(this));
+        silo = new Silo(SETTLEMENT, CoWIERC20(address(WETH)), recipient, BUY_AMOUNT, BUY_AMOUNT, 0, address(this));
         adapter = new ApprovalFundingAdapter(treasury, address(silo));
         silo.setFundingAdapter(adapter);
 
@@ -261,6 +262,59 @@ contract SiloSettlementTest is Test {
         assertEq(silo.preparedBalance(USDC), 0);
     }
 
+    function _useDescendingAuction() internal {
+        silo = new Silo(
+            SETTLEMENT, CoWIERC20(address(WETH)), recipient, 2 * BUY_AMOUNT, BUY_AMOUNT, 1 hours, address(this)
+        );
+        adapter = new ApprovalFundingAdapter(treasury, address(silo));
+        silo.setFundingAdapter(adapter);
+        vm.prank(treasury);
+        assertTrue(USDC.approve(address(adapter), SELL_AMOUNT));
+        vm.warp(block.timestamp + 1 hours);
+    }
+
+    function testDescendingAuctionRejectsPreparationWithoutRegistration() public {
+        _useDescendingAuction();
+        omitRegistration = true;
+        GPv2Order.Data memory order = _order(SELL_AMOUNT, BUY_AMOUNT);
+        bytes memory stateBefore = _tradeState(order);
+        _settle(order, abi.encodeWithSelector(ISilo.InvalidCommitment.selector));
+        assertEq(_tradeState(order), stateBefore);
+        assertEq(silo.currentMinimumBuyAmount(order.sellToken), BUY_AMOUNT);
+    }
+
+    function testDescendingAuctionSettlesWithHookAndRegistration() public {
+        _useDescendingAuction();
+        GPv2Order.Data memory order = _order(SELL_AMOUNT, BUY_AMOUNT);
+        _settle(order);
+        assertEq(SETTLEMENT.filledAmount(_uid(order)), SELL_AMOUNT);
+        assertEq(silo.currentMinimumBuyAmount(order.sellToken), 2 * BUY_AMOUNT);
+        assertEq(USDC.balanceOf(address(silo)), 0);
+    }
+
+    function testDescendingAuctionWithNondefaultHookGasLimit() public {
+        _useDescendingAuction();
+        silo.setHookGasLimit(600_000);
+        GPv2Order.Data memory order = _order(SELL_AMOUNT, BUY_AMOUNT);
+        _settle(order);
+        assertEq(SETTLEMENT.filledAmount(_uid(order)), SELL_AMOUNT);
+        assertEq(silo.currentMinimumBuyAmount(order.sellToken), 2 * BUY_AMOUNT);
+    }
+
+    function testDescendingAuctionStaleDocumentRollsBackRegistration() public {
+        _useDescendingAuction();
+        GPv2Order.Data memory order = _order(SELL_AMOUNT, BUY_AMOUNT);
+        bytes memory stateBefore = _tradeState(order);
+        silo.setHookGasLimit(600_000);
+        _settle(order, abi.encodeWithSelector(ISilo.InvalidAppData.selector));
+        assertEq(_tradeState(order), stateBefore);
+        assertFalse(silo.isCommitted(order.hash(silo.domainSeparator())));
+        assertEq(silo.currentMinimumBuyAmount(order.sellToken), BUY_AMOUNT);
+        silo.setHookGasLimit(500_000);
+        _settle(order);
+        assertEq(SETTLEMENT.filledAmount(_uid(order)), SELL_AMOUNT);
+    }
+
     function _tradeState(GPv2Order.Data memory order) internal view returns (bytes memory) {
         bytes memory balances = abi.encode(
             USDC.balanceOf(treasury),
@@ -288,7 +342,7 @@ contract SiloSettlementTest is Test {
             receiver: recipient,
             sellAmount: sellAmount,
             buyAmount: buyAmount,
-            validTo: uint32(block.timestamp + 5 minutes),
+            validTo: uint32(block.timestamp + silo.auctionDuration() + 5 minutes),
             appData: silo.appData(USDC),
             feeAmount: 0,
             kind: GPv2Order.KIND_SELL,
@@ -334,7 +388,10 @@ contract SiloSettlementTest is Test {
             signature: abi.encodePacked(address(silo), abi.encode(order))
         });
         IMainnetSettlement.Interaction[][3] memory interactions;
-        interactions[0] = new IMainnetSettlement.Interaction[](1);
+        interactions[0] = new IMainnetSettlement.Interaction[](silo.auctionDuration() == 0 || omitRegistration ? 1 : 2);
+        if (silo.auctionDuration() != 0 && !omitRegistration) {
+            interactions[0][1] = IMainnetSettlement.Interaction(address(silo), 0, abi.encodeCall(ISilo.commit, (order)));
+        }
         if (useTrampoline) {
             IHooksTrampoline.Hook[] memory hooks = new IHooksTrampoline.Hook[](1);
             hooks[0] = IHooksTrampoline.Hook(address(silo), abi.encodeCall(ISilo.prepare, (USDC)), silo.hookGasLimit());

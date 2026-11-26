@@ -22,26 +22,30 @@ Each `OrderTerms` snapshot contains:
 | --- | --- |
 | `silo`, `sellToken`, `buyToken`, `receiver` | Addresses. `buyToken` is the resource token and `receiver` is its configured recipient. |
 | `sellAmount`, `minimumBuyAmount` | Full sell balance and output floor, both `bigint` values in the respective token's smallest unit. |
+| `currentMinimumBuyAmount`, `auctionDuration` | Minimum for this sell token at the selected block (`bigint`) and effective duration in seconds (`number`). |
 | `hookGasLimit` | Current appData pre-hook gas limit as a `bigint`, read at the same block as `appData`. |
 | `appData`, `domainSeparator` | The token-specific appData hash from `appData(sellToken)` and the Settlement domain separator. |
 | `blockNumber`, `blockTimestamp` | Snapshot block number and Unix time in seconds, both `bigint` values. |
 
 ## Build a JIT trade
 
-`buildJitTrade(terms, { buyAmount, validTo })` uses your quoted `buyAmount` (`bigint`) as the order limit. It must be at least `terms.minimumBuyAmount`. Pass `validTo` as a `number` in Unix seconds. At execution, it must be between the block timestamp and five minutes after that timestamp.
+`buildJitTrade(terms, { buyAmount, validTo })` uses your quoted `buyAmount` (`bigint`) as the order limit. It must be at least `terms.currentMinimumBuyAmount`. Use `buildOrderDeadlines` as shown in the [solver example](/actors/solvers#quote-build-and-simulate). The execution deadline is at most five minutes after the block timestamp. CoW `validTo` adds `terms.auctionDuration` so Settlement retains the fill record until the restarted auction reaches the floor. Check that your driver accepts this expiry.
 
-The result contains `jitOrder` with the Silo-prefixed ERC-1271 signature, `executedAmount` as the full sell amount in decimal string form, `appDataDocument` as the exact JSON for publication, and `preparationHook` for `Silo.prepare(sellToken)`. The builder checks that the snapshot's appData hash matches the canonical document. Your solver assembles and simulates the settlement.
+The result contains `jitOrder` with the Silo-prefixed ERC-1271 signature, `executedAmount` as the full sell amount in decimal string form, `preInteraction` for a direct Settlement `Silo.commit(order)` call, `appDataDocument` as the exact JSON for publication, and `preparationHook` for `Silo.prepare(sellToken)`. The builder checks that the snapshot's appData hash matches the canonical document. Your solver assembles and simulates the settlement.
 
-Publish `appDataDocument` through the CoW appData service without changing its bytes. Its hash alone does not give solvers the hook. Execute `preparationHook` before signature validation, directly or through the CoW Hooks Trampoline. `prepare` accepts any caller. The SDK does not publish documents or encode the outer trampoline call.
+Publish `appDataDocument` through the CoW appData service without changing its bytes. Execute `preparationHook` directly or through the CoW Hooks Trampoline, then execute `preInteraction` directly from Settlement, both before signature validation. The trampoline cannot call `commit`. Descending auctions need the commitment for UID/fill tracking; flat auctions need only preparation, but the SDK always returns the commit interaction. `commit` prepares if needed and does not fund again after preparation. The SDK does not publish documents or encode the outer trampoline call.
 
 ## Lower-level functions
 
 | Function | Result |
 | --- | --- |
-| `buildOrder` | Canonical Silo order data. Requires the current `minimumBuyAmount` and rejects a lower limit. |
+| `buildOrder` | Canonical Silo order data. Requires `currentMinimumBuyAmount` and rejects a lower limit. |
 | `encodeOrderPayload` | Raw ERC-1271 payload for `Silo.isValidSignature`. |
 | `encodeSolverSignature` | CoW solver API signature with the Silo owner prefix. |
 | `hashOrder` | CoW EIP-712 order digest from a Settlement domain separator. |
+| `buildCommitInteraction(silo, order)` | Direct Settlement pre-interaction for `Silo.commit(order)`. |
+| `buildCommitInteractions(silo, orders)` | Commit pre-interactions for distinct sell tokens. |
+| `buildOrderDeadlines` | Execution deadline and CoW `validTo` with the auction-duration offset. |
 | `buildPreparationHook(silo, sellToken, hookGasLimit)` | Hook target, calldata for permissionless `prepare(sellToken)`, and the supplied gas limit. Requires a nonzero uint256 `bigint`. |
 | `buildAppData(silo, sellToken, hookGasLimit)` | Exact JSON document, its complete hash, and the preparation hook for the supplied Silo, token, and gas limit. |
 | `toSolverJitOrder` | CoW solver API JIT order object. |
