@@ -6,12 +6,12 @@
 
 CoW Silo converts protocol fee tokens through CoW Protocol solver competition.
 
-The contracts are small. They do not contain a token registry, an oracle, a router, or a keeper. Solvers find Silo balances. Solvers set candidate prices. CoW Protocol selects the winning settlement.
+The planned production flow uses a permissionless watchtower to discover compatible Silos and post regular orders to the CoW Order Book. Solvers fill those orders through the standard CoW order flow. The watchtower and the contract changes needed for posted orders are not implemented yet.
 
 > [!WARNING]
-> This repository is an early implementation. The contracts have not completed an audit. CoW Protocol must recognize deployed Silo addresses as surplus-capturing JIT-order owners before production use.
+> This repository contains a proof of concept for solver-created just-in-time (JIT) orders. The contracts have not completed an audit.
 
-## Components
+## Proof-of-concept components
 
 | Component | Purpose |
 | --- | --- |
@@ -34,7 +34,7 @@ flowchart LR
   T --> B[Burner]
 ```
 
-## How the order works
+## How the proof-of-concept order works
 
 1. A protocol sends fee tokens to a Silo or configures an optional funding adapter.
 2. Solvers read the Silo balance and any expected adapter funding.
@@ -93,9 +93,11 @@ Set `MINIMUM_BUY_AMOUNT` in the resource token's smallest unit. Use the Burner a
 
 No official Silo deployment exists. See [the deployment registry](./deployments/addresses.json).
 
-## CoW integration status
+## Production roadmap
 
-The onchain and SDK paths are implemented and tested. The next integration step is an upstream CoW configuration change. It must add approved Silo owners, or an approved Silo factory, to the surplus-capturing JIT owner set. Without that change, Silo surplus does not count in solution scoring as intended.
+The next step is to adapt the contracts for orders posted to the CoW Order Book. The watchtower will discover compatible Silos, read their order terms, and post and track orders without a Silo owner key. New integrations will use a shared contract interface. See the [roadmap](./docs/pages/roadmap.mdx).
+
+The proof of concept uses solver-created JIT orders. For that path, CoW Protocol must recognize approved Silo owners, or an approved Silo factory, before Silo surplus counts in solution scoring. This is a requirement of the JIT path.
 
 The optional [offline integration profile](./integration/offline/README.md) starts a complete local CoW stack. It is separate from the fast unit-test loop.
 

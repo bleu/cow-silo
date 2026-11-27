@@ -1,5 +1,7 @@
 # Deployers
 
+These instructions apply to the JIT proof of concept. The posted-order contracts and watchtower are on the [production roadmap](/roadmap).
+
 ## Before deployment
 
 - Confirm the canonical CoW Settlement address.
@@ -9,7 +11,7 @@
 - Select the initial minimum buy amount in the resource token's smallest unit.
 - Select the initial owner. The factory caller becomes the owner.
 - Arrange publication of the fixed appData document for each Silo/sell-token pair after deployment. The SDK produces the exact document and hash; no appData constructor input is needed.
-- Obtain the required CoW JIT owner configuration.
+- For JIT surplus-scoring tests, obtain the required CoW JIT owner configuration.
 
 ## Deploy
 

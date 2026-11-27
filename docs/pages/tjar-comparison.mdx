@@ -1,19 +1,17 @@
 # TJAR comparison
 
-Silo and TJAR keep price discovery offchain. Their execution models differ.
+This page compares TJAR with the planned CoW Silo production flow. See [How it works](/how-it-works) for the current JIT proof of concept.
 
-| Area | Uniswap TJAR | CoW Silo |
+| Area | Uniswap TJAR | Planned CoW Silo |
 | --- | --- | --- |
 | Asset holder | `TokenJar` | `Silo` |
 | Conversion actor | Searcher | CoW solver |
 | Selection | First valid release transaction | CoW solver competition |
-| Price rule | Fixed resource payment for a release | Project minimum plus solver-selected JIT limit and batch clearing price |
-| Withdrawal | Releaser transfers selected full balances | Vault Relayer sells one or more independent full balances |
+| Price rule | Fixed resource payment for a release | Posted order limit subject to the protocol's output floor |
+| Withdrawal | Releaser transfers selected full balances | Vault Relayer transfers funds during settlement |
 | Burn sink | `Firepit` | `Burner` |
-| Discovery | Factory events and offchain search | Factory events and solver indexing |
+| Discovery | Factory events and offchain search | Permissionless watchtower discovers Silos and posts orders |
 | Oracle | None | None |
 | Routing | Searcher | Solver |
 
-TJAR creates a speed race around a fixed onchain payment. Silo gives each full-balance conversion an onchain resource minimum and puts candidate conversions into a CoW auction. Output above the minimum goes to the configured recipient. The auction can reduce MEV and value leakage when several solvers compete.
-
-Silo needs CoW infrastructure support. TJAR does not need a batch-auction allowlist.
+TJAR creates a speed race around a fixed onchain payment. In the planned Silo flow, a watchtower posts an order and solvers compete to fill it in a CoW auction. The executed resource-token output goes to the configured recipient. The auction can reduce value leakage when several solvers compete.

@@ -1,5 +1,7 @@
 # Solvers
 
+The planned production flow uses orders posted to the CoW Order Book. It requires no Silo-specific solver integration. This guide describes the current JIT proof of concept.
+
 A solver can use Silo inventory to fill user orders in a CoW batch or route it through external liquidity. The Silo sets a minimum buy amount in the resource token. Your solver must price the full sell balance and account for gas and token transfer behavior.
 
 ## Find candidate sell tokens

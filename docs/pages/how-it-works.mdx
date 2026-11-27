@@ -1,16 +1,28 @@
 # How it works
 
-## Collection
+## Planned production flow
+
+1. The protocol configures its Silo and supplies fee tokens. The contract design will specify the shared interface for discovery, order terms, and optional source funding.
+2. A permissionless watchtower discovers compatible Silos, reads eligible balances and order terms, and posts regular orders to the CoW Order Book. It tracks posted orders and checks for changes that require a new order.
+3. CoW solvers compete to fill the posted orders through their usual auction flow. They do not need to discover Silos or construct Silo-specific JIT orders.
+
+The watchtower and contract changes for posted orders are planned work. The current settlement tests do not cover Order Book admission.
+
+## JIT proof of concept
+
+The rest of this page describes the current implementation, where a solver builds a JIT order and prepares the Silo's balance in the settlement transaction.
+
+### Collection
 
 A protocol can transfer ERC-20 fee tokens directly to its Silo address. The Silo does not index tokens. Funding is disabled by default.
 
 The owner can instead configure a funding adapter with `setFundingAdapter`. `ApprovalFundingAdapter` pulls inventory from a fixed source into a fixed Silo. The source approves the adapter, not the Silo or Vault Relayer. Its available amount is the smaller of the source balance and allowance to the adapter.
 
-## Discovery
+### Discovery
 
 Solvers index `SiloCreated` events from `SiloFactory`. They read token balances, the current minimum buy amount, and the configured funding adapter from each Silo. With funding enabled, the solver adds expected adapter funding to the current Silo balance to select `sellAmount`. `IFundingAdapter` has no required quote method; `availableBalance` is specific to `ApprovalFundingAdapter`.
 
-## Competition
+### Competition
 
 Each solver creates a candidate JIT order. The order sells the complete token balance. It buys the fixed resource token. It pays the fixed resource recipient.
 
@@ -18,13 +30,13 @@ The solver sets `buyAmount`. This value is the order limit and must be at least 
 
 CoW Protocol scores competing settlements. A higher execution value improves the score when CoW recognizes the Silo as a surplus-capturing JIT owner.
 
-## AppData
+### AppData
 
 Each order uses a fixed JSON shape with one pre-hook: `Silo.prepare(sellToken)`. The target is the Silo. The hook gas limit is the current `hookGasLimit`, initially 500,000, which the owner can change. The Silo inserts the expected calldata hex and current decimal gas limit into the template, then checks the complete document hash against the order's `appData`. Changing the limit changes the expected hash for every sell token, so solvers must rebuild orders and publish the new documents.
 
 The SDK returns the exact document for publication to the CoW appData service. Solvers need that document to read the hook; its hash alone contains no readable hook instruction. Extra hooks, different metadata, or different JSON bytes produce a hash the Silo does not accept.
 
-## Settlement
+### Settlement
 
 The solver executes the pre-hook before signature validation, directly or through the CoW Hooks Trampoline. Any account can call `prepare`; there is no configured hook caller. A call in an earlier transaction cannot prepare a later settlement because the snapshot clears at transaction end.
 
@@ -34,7 +46,7 @@ The Settlement contract then verifies each ERC-1271 signature. The Silo requires
 
 Preparation can move source inventory into the Silo without a later trade. Funding rolls back if the outer transaction reverts, but a successful transaction can leave the funded tokens in the Silo. The trampoline ignores failed hook calls; missing preparation must therefore fail signature validation. Simulate the full settlement. A standalone `verify` checks only the current order rules and does not fund or prepare the Silo.
 
-## Output
+### Output
 
 The Settlement contract sends the complete executed resource-token output to the immutable recipient. The recipient can be a treasury or a Burner. Output above the minimum remains with the recipient.
 

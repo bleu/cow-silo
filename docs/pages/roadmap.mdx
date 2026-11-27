@@ -1,12 +1,15 @@
 # Roadmap
 
-## Integration
+## Production integration
 
-- Add an offline end-to-end settlement test.
-- Add a reference solver adapter.
-- Complete the CoW surplus-capturing JIT owner integration.
+- Review existing fee burners and adapt the Silo contracts for orders posted to the CoW Order Book.
+- Build a permissionless watchtower that discovers compatible Silos, posts their orders, and tracks their status.
+- Test the posted-order flow in the local CoW stack.
 - Deploy and verify a testnet factory and Silo.
-- Complete an independent security audit.
+- Complete an independent contract audit and fix the findings before production use.
+- Support a CoW Swap fee burner switch on one chain and a production integration with an external protocol.
+
+The current implementation uses solver-created JIT orders. See [How it works](/how-it-works) for the distinction between the proof of concept and the planned production flow.
 
 ## Contracts
 

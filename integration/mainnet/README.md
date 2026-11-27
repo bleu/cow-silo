@@ -57,4 +57,4 @@ The fixture checks chain ID, deployed token, Settlement, and HooksTrampoline cod
 | WETH | `0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2` |
 | USDC fixture holder | `0x55FE002aefF02F77364de339a1292923A15844B8` |
 
-All caller impersonation occurs only on the local fork. The solver supplies test liquidity directly: Settlement sends the sold USDC to the solver, then pulls the solver's WETH before paying the resource recipient. The tests do not use an AMM route, check market prices, enter a live auction, or prove production scoring support. They do not grant permission to use these accounts on mainnet.
+All caller impersonation occurs only on the local fork. The solver supplies test liquidity directly: Settlement sends the sold USDC to the solver, then pulls the solver's WETH before paying the resource recipient. The tests do not submit orders to the CoW Order Book, use an AMM route, check market prices, enter a live auction, or validate solution scoring. They do not grant permission to use these accounts on mainnet.
