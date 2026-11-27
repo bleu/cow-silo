@@ -6,6 +6,8 @@ Send a private report to `security@bleu.fi`. Include the affected commit, the im
 
 ## Trust model
 
+These rules describe the current JIT proof of concept.
+
 - The two-step Silo owner can change the minimum buy amount and hook gas limit, and replace or disable the funding adapter. The owner cannot withdraw Silo tokens.
 - The resource token, recipient, appData JSON shape, Settlement contract, and Vault Relayer are immutable. The document must encode the current owner-set hook gas limit.
 - Any account can prepare a token and trigger optional funding into the fixed Silo without a later trade. Source approvals must permit this early transfer.
@@ -16,4 +18,4 @@ Send a private report to `security@bleu.fi`. Include the affected commit, the im
 - Solver competition supplies price discovery. The Silo has no oracle.
 - The Burner has no recovery function.
 
-The design needs a correct CoW surplus-capturing JIT configuration. A deployment is not production-ready until CoW Protocol recognizes its Silo owners.
+For the JIT proof of concept, CoW Protocol must recognize Silo owners before their JIT surplus counts in scoring. The planned production path uses regular Order Book orders. That path needs an independent review of the contract changes and their interaction with order validation and settlement.

@@ -2,9 +2,11 @@
 
 ## Why use Silo
 
-Silo can convert many fee tokens into one treasury token. The protocol does not need to maintain routes or run a keeper. CoW solvers compete to provide the conversion.
+Silo can convert many fee tokens into one treasury token. The planned production flow lets protocols use a shared, permissionless watchtower to post orders. A protocol can also run its own instance. CoW solvers compete to fill the orders through the standard auction flow.
 
-## Integration
+## Proof-of-concept integration
+
+The steps below apply to the current solver-created JIT implementation. The production watchtower and posted-order validation are planned work.
 
 1. Select the resource token.
 2. Select a treasury or deploy a Burner.
@@ -12,7 +14,7 @@ Silo can convert many fee tokens into one treasury token. The protocol does not 
 4. Select a factory with the trusted Settlement.
 5. Deploy a Silo through `SiloFactory`.
 6. Send fee tokens to the Silo or configure optional adapter funding.
-7. Confirm that CoW Protocol recognizes the Silo deployment model.
+7. If testing surplus scoring for JIT orders, confirm that CoW Protocol recognizes the Silo as a surplus-capturing JIT owner.
 8. Monitor settlements and received resource tokens.
 
 Do not send the resource token to the Silo. The Silo cannot sell its resource token.

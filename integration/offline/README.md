@@ -29,6 +29,6 @@ The first build can take several minutes.
 
 ## Current scope
 
-This profile starts the dependency stack. Foundry unit tests remain the default CI path. A complete Silo settlement scenario is roadmap work because the local driver must also recognize the Silo as a surplus-capturing JIT owner and a solver must submit the Silo JIT trade.
+This profile starts the dependency stack. Foundry unit tests remain the default CI path. The planned production test will post a Silo order to the CoW Order Book, fill it through the usual auction flow, and check settlement. The profile does not run that scenario yet. A separate test of the JIT proof of concept would need a solver to submit the Silo JIT trade and the local driver to recognize the Silo for JIT surplus scoring.
 
 Use the `cowprotocol/services` playground when a test needs the newest production service code. The grant playground is useful for isolated and repeatable local work.

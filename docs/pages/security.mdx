@@ -2,7 +2,7 @@
 
 ## Enforced onchain
 
-The Silo enforces these rules:
+The current JIT proof of concept enforces these rules:
 
 - The sell token is not the resource token.
 - The buy token is the resource token.
@@ -49,7 +49,7 @@ A correct hash proves which document an order uses. It does not publish the docu
 
 ## Required external controls
 
-CoW Protocol authorizes solvers. CoW Protocol also controls the surplus-capturing JIT owner set. This set must include the production Silo deployment model.
+CoW Protocol authorizes solvers. For the current proof of concept, it also decides which JIT order owners count toward surplus scoring. The planned production flow uses regular Order Book orders. It depends on watchtower availability, Order Book validation, and ordinary solver competition. The contract changes for that flow still need an audit.
 
 The Silo has no price oracle. The minimum buy amount is an absolute output floor, not a price assertion. Solver competition supplies price discovery above that floor. If competition fails, an order can execute at its limit. Protocols must treat the selected minimum, CoW configuration, and solver diversity as security dependencies.
 

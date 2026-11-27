@@ -16,4 +16,4 @@ The optional offline profile uses the CoW Protocol Offline Playground. It starts
 
 The profile pins an upstream commit. It stores the checkout in `.cache/`. The profile is not part of the default CI job because it builds the complete CoW service stack.
 
-Use this profile to validate settlement calldata and solver adapter changes. Use the official `cowprotocol/services` playground for changes that need the current production service code.
+The profile starts the services but does not run a complete Silo auction scenario. The planned production test will post a Silo order to the Order Book, fill it through the usual auction flow, and check settlement. Use the official `cowprotocol/services` playground when tests need the current production service code.
